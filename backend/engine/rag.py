@@ -11,7 +11,9 @@ from typing import List, Dict, Any, Optional
 
 load_dotenv()
 
-CHROMA_PATH = "chroma_db"
+# RAG and Vector DB Configuration
+db_dir = os.getenv("DATABASE_DIR", ".")
+CHROMA_PATH = os.path.join(db_dir, "chroma_db")
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
 
 class RAGEngine:
