@@ -14,7 +14,10 @@ load_dotenv()
 # RAG and Vector DB Configuration
 db_dir = os.getenv("DATABASE_DIR", ".")
 CHROMA_PATH = os.path.join(db_dir, "chroma_db")
-GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
+GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
+
+if not GOOGLE_API_KEY:
+    print("CRITICAL ERROR: GOOGLE_API_KEY is not set in environment variables!")
 
 class RAGEngine:
     async def __aenter__(self):
@@ -24,6 +27,9 @@ class RAGEngine:
         pass
 
     def __init__(self):
+        if not GOOGLE_API_KEY:
+            raise ValueError("GOOGLE_API_KEY is required but found None. Check your Render Environment Variables.")
+            
         # Revert to gemini-embedding-001 for stability
         self.embeddings = GoogleGenerativeAIEmbeddings(
             model="models/gemini-embedding-001",
