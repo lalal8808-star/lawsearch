@@ -1,0 +1,39 @@
+# OS files
+.DS_Store
+Thumbs.db
+
+# Environments
+.env
+.env.local
+.venv
+venv
+ENV/
+env.bak/
+venv.bak/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+backend/backend.log
+
+# Node
+node_modules/
+frontend/.next/
+frontend/out/
+build/
+dist/
+
+# Databases & Vector DB
+*.db
+backend/law_history.db
+backend/chroma_db/
+chroma_db/
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
