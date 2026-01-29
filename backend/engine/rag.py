@@ -377,7 +377,11 @@ class RAGEngine:
 class VisionEngine:
     def __init__(self):
         # Using gemini-2.0-flash-lite which supports multimodal
-        self.vision_llm = ChatGoogleGenerativeAI(model="gemini-2.0-flash-lite", temperature=0)
+        self.vision_llm = ChatGoogleGenerativeAI(
+            model="gemini-2.0-flash-lite", 
+            temperature=0,
+            google_api_key=GOOGLE_API_KEY
+        )
 
     async def analyze_contract_document(self, image_bytes: Optional[bytes] = None, text_content: Optional[str] = None, user_description: str = "") -> Dict[str, Any]:
         """
