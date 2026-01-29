@@ -25,14 +25,25 @@ class RAGEngine:
 
     def __init__(self):
         # Revert to gemini-embedding-001 for stability
-        self.embeddings = GoogleGenerativeAIEmbeddings(model="models/gemini-embedding-001")
+        self.embeddings = GoogleGenerativeAIEmbeddings(
+            model="models/gemini-embedding-001",
+            google_api_key=GOOGLE_API_KEY
+        )
         self.vector_store = Chroma(
             persist_directory=CHROMA_PATH,
             embedding_function=self.embeddings,
             collection_name="law_collection"
         )
-        self.chat_llm = ChatGoogleGenerativeAI(model="gemini-2.0-flash-lite", temperature=0.7)
-        self.report_llm = ChatGoogleGenerativeAI(model="gemini-3-pro-preview", temperature=0)
+        self.chat_llm = ChatGoogleGenerativeAI(
+            model="gemini-2.0-flash-lite", 
+            temperature=0.7,
+            google_api_key=GOOGLE_API_KEY
+        )
+        self.report_llm = ChatGoogleGenerativeAI(
+            model="gemini-1.5-pro", 
+            temperature=0,
+            google_api_key=GOOGLE_API_KEY
+        )
         self._metadata_cache = None # Stores {'sources': set(), 'msts': set()}
 
     def _refresh_metadata_cache(self):
