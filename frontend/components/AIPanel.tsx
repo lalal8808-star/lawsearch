@@ -173,8 +173,8 @@ export default function AIPanel() {
                         <Scale className="text-white w-5 h-5" />
                     </div>
                     <div className="flex flex-col">
-                        <h2 className="font-bold text-md leading-none">JongLaw AI</h2>
-                        <span className="text-[9px] text-primary/80 font-bold uppercase tracking-widest mt-0.5">Legal Intelligence</span>
+                        <h2 className="font-bold text-sm sm:text-md leading-none">JongLaw AI</h2>
+                        <span className="text-[7px] sm:text-[9px] text-primary/80 font-bold uppercase tracking-widest mt-0.5">Legal Intelligence</span>
                     </div>
                 </div>
             </div>
@@ -184,11 +184,13 @@ export default function AIPanel() {
                 className="flex-1 overflow-y-auto p-4 space-y-4 custom-scrollbar"
             >
                 {messages.length === 0 && (
-                    <div className="flex flex-col items-center justify-center h-full text-muted space-y-3">
-                        <div className="w-16 h-16 bg-white/5 rounded-2xl flex items-center justify-center border border-white/10">
+                        <div className="w-16 h-16 bg-white/5 rounded-3xl flex items-center justify-center border border-white/10 mb-2">
                             <Bot className="w-8 h-8 opacity-20" />
                         </div>
-                        <p className="text-sm font-medium">JongLaw AI에게 궁금한 법률 사항을 물어보세요.</p>
+                        <p className="text-[13px] sm:text-sm font-medium text-center leading-relaxed">
+                            JongLaw AI에게 궁금한 <br className="sm:hidden" />
+                            법률 사항을 물어보세요.
+                        </p>
                     </div>
                 )}
                 <AnimatePresence>
@@ -389,7 +391,7 @@ export default function AIPanel() {
                         ref={textareaRef}
                         rows={1}
                         className="flex-1 bg-black/40 border border-white/10 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50 placeholder:text-white/20 resize-none min-h-[44px] max-h-[200px] custom-scrollbar leading-relaxed"
-                        placeholder={selectedImage ? "이미지 분석을 위한 설명을 입력하거나(선택), 전송 버튼을 눌러주세요..." : "법률 관련 궁금한 점을 질문해보세요..."}
+                        placeholder={selectedImage ? (window.innerWidth < 640 ? "이미지 설명 입력..." : "이미지 분석을 위한 설명을 입력하거나(선택), 전송 버튼을 눌러주세요...") : "법률 질문을 입력해보세요..."}
                         value={query}
                         onChange={(e) => setQuery(e.target.value)}
                         onKeyDown={(e) => {
@@ -408,6 +410,6 @@ export default function AIPanel() {
                     </button>
                 </div>
             </div>
-        </div>
+        </div >
     );
 }

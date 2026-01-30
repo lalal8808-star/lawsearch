@@ -48,8 +48,8 @@ export default function Home() {
               <Scale size={20} className="text-white" />
             </div>
             <div className="flex flex-col">
-              <span className="font-black text-lg tracking-tighter leading-none">JongLaw AI</span>
-              <span className="text-[8px] text-primary font-bold uppercase tracking-widest mt-0.5">Legal Intelligence</span>
+              <span className="font-black text-base sm:text-lg tracking-tighter leading-none shrink-0">JongLaw AI</span>
+              <span className="text-[7px] sm:text-[8px] text-primary font-bold uppercase tracking-[0.15em] sm:tracking-widest mt-0.5">Legal Intelligence</span>
             </div>
           </div>
 
@@ -84,8 +84,8 @@ export default function Home() {
             {user ? (
               <div className="flex items-center gap-4">
                 <div className="flex flex-col items-end">
-                  <span className="text-[10px] font-black tracking-widest text-primary uppercase">Authenticated</span>
-                  <span className="text-xs font-bold text-white">{user.username}</span>
+                  <span className="hidden sm:block text-[10px] font-black tracking-widest text-primary uppercase">Authenticated</span>
+                  <span className="text-[10px] sm:text-xs font-bold text-white max-w-[80px] sm:max-w-none truncate">{user.username}</span>
                 </div>
                 <button
                   onClick={logout}
