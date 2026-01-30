@@ -26,7 +26,10 @@ database.init_db()
 
 # Configure CORS
 env_origins = os.getenv("ALLOWED_ORIGINS", "http://localhost:3000,http://127.0.0.1:3000,http://localhost:3001").split(",")
-origins = [origin.strip() for origin in env_origins if origin.strip()]
+# Robustly clean origins: strip spaces and trailing slashes
+origins = [origin.strip().rstrip("/") for origin in env_origins if origin.strip()]
+
+logger.info(f"Allowed Origins: {origins}")
 
 app.add_middleware(
     CORSMiddleware,
