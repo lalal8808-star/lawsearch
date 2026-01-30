@@ -17,10 +17,16 @@ export default function AIPanel() {
     const [mounted, setMounted] = useState(false);
     const { user } = useAuth();
     const messagesEndRef = useRef<HTMLDivElement>(null);
+    const scrollContainerRef = useRef<HTMLDivElement>(null);
     const textareaRef = useRef<HTMLTextAreaElement>(null);
 
     const scrollToBottom = () => {
-        messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+        if (scrollContainerRef.current) {
+            scrollContainerRef.current.scrollTo({
+                top: scrollContainerRef.current.scrollHeight,
+                behavior: "smooth"
+            });
+        }
     };
 
     useEffect(() => {
@@ -168,7 +174,10 @@ export default function AIPanel() {
                 </div>
             </div>
 
-            <div className="flex-1 overflow-y-auto p-4 space-y-4 custom-scrollbar">
+            <div
+                ref={scrollContainerRef}
+                className="flex-1 overflow-y-auto p-4 space-y-4 custom-scrollbar"
+            >
                 {messages.length === 0 && (
                     <div className="flex flex-col items-center justify-center h-full text-muted space-y-3">
                         <div className="w-16 h-16 bg-white/5 rounded-2xl flex items-center justify-center border border-white/10">
