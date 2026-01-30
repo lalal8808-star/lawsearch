@@ -12,6 +12,7 @@ export default function AIPanel() {
     const [messages, setMessages] = useState<{ role: string; content: string; sources?: any[]; intent?: string; engine?: string }[]>([]);
     const [loading, setLoading] = useState(false);
     const [progress, setProgress] = useState(0);
+    const [loadingStage, setLoadingStage] = useState("");
     const [selectedImage, setSelectedImage] = useState<File | null>(null);
     const [abortController, setAbortController] = useState<AbortController | null>(null);
     const [mounted, setMounted] = useState(false);
@@ -50,16 +51,20 @@ export default function AIPanel() {
         let timer: NodeJS.Timeout;
         if (loading) {
             setProgress(0);
+            setLoadingStage("사건 분석중...");
             timer = setInterval(() => {
                 setProgress(prev => {
-                    if (prev < 60) return prev + Math.random() * 5;
-                    if (prev < 90) return prev + Math.random() * 2;
-                    if (prev < 98) return prev + 0.1;
-                    return prev;
+                    const next = prev + (prev < 60 ? Math.random() * 5 : prev < 90 ? Math.random() * 2 : 0.1);
+                    if (next < 30) setLoadingStage("사건 분석중...");
+                    else if (next < 60) setLoadingStage("관련 법령 및 판례 검색중...");
+                    else if (next < 85) setLoadingStage("AI 답변 생성중...");
+                    else setLoadingStage("최종 검토 및 정리중...");
+                    return prev < 98 ? next : prev;
                 });
             }, 500);
         } else {
             setProgress(0);
+            setLoadingStage("");
         }
         return () => clearInterval(timer);
     }, [loading]);
@@ -335,15 +340,18 @@ export default function AIPanel() {
                 {loading && (
                     <div className="flex justify-start">
                         <div className="bg-white/5 border border-white/10 p-4 rounded-2xl animate-pulse flex flex-col gap-3 min-w-[220px]">
+                            <div className="flex flex-col items-center gap-3">
+                                <div className="flex items-center gap-2">
+                                    <div className="w-1.5 h-1.5 bg-primary rounded-full animate-bounce [animation-delay:-0.3s]"></div>
+                                    <div className="w-1.5 h-1.5 bg-primary rounded-full animate-bounce [animation-delay:-0.15s]"></div>
+                                    <div className="w-1.5 h-1.5 bg-primary rounded-full animate-bounce"></div>
+                                </div>
+                                <span className="text-[10px] font-black text-primary uppercase tracking-[0.2em] animate-pulse">
+                                    {loadingStage} ({Math.round(progress)}%)
+                                </span>
+                            </div>
                             <div className="flex items-center justify-between gap-4">
                                 <div className="flex flex-col gap-1.5 flex-1">
-                                    <div className="flex items-center justify-between text-[10px] font-bold text-primary mb-0.5">
-                                        <div className="flex items-center gap-2 uppercase tracking-tight">
-                                            <Scale className="w-3 h-3 animate-spin" />
-                                            <span>Legal Analysis in Progress...</span>
-                                        </div>
-                                        <span>{Math.floor(progress)}%</span>
-                                    </div>
                                     <div className="h-1 w-full bg-white/5 rounded-full overflow-hidden">
                                         <motion.div
                                             className="h-full bg-primary"

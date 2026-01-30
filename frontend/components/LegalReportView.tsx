@@ -131,21 +131,21 @@ export default function LegalReportView({ reportId, query, answer, sources, engi
             <div className="flex-1 flex w-full max-w-[1600px] mx-auto relative group">
 
                 {/* Left Side: Report View */}
-                <div className="flex-1 p-12 md:p-20 overflow-y-auto max-h-screen scrollbar-hide w-full">
+                <div className="flex-1 p-6 md:p-12 lg:p-20 overflow-y-auto max-h-screen scrollbar-hide w-full">
                     <div className="max-w-3xl mx-auto space-y-16">
 
-                        <div className="flex justify-end items-center gap-3 print:hidden mb-12 border-b border-slate-100 pb-4">
+                        <div className="flex flex-col md:flex-row justify-end items-stretch md:items-center gap-3 print:hidden mb-12 border-b border-slate-100 pb-4">
                             {!isNaN(parseInt(reportId)) && (
                                 <button
                                     onClick={() => setIsChatOpen(true)}
-                                    className="flex items-center gap-2 px-6 py-2 bg-blue-600 text-white hover:bg-blue-700 rounded-xl transition-all text-sm font-bold shadow-lg shadow-blue-900/10"
+                                    className="flex items-center justify-center gap-2 px-6 py-3 md:py-2 bg-blue-600 text-white hover:bg-blue-700 rounded-xl transition-all text-sm font-bold shadow-lg shadow-blue-900/10"
                                 >
                                     <MessageCircle size={16} /> AI 심층 질의
                                 </button>
                             )}
                             <button
                                 onClick={() => window.print()}
-                                className="flex items-center gap-2 px-6 py-2 bg-slate-900 text-white hover:bg-slate-800 rounded-xl transition-all text-sm font-bold shadow-lg shadow-slate-900/20"
+                                className="flex items-center justify-center gap-2 px-6 py-3 md:py-2 bg-slate-900 text-white hover:bg-slate-800 rounded-xl transition-all text-sm font-bold shadow-lg shadow-slate-900/20"
                             >
                                 <Printer size={16} /> 리포트 인쇄 / PDF 저장
                             </button>
@@ -164,7 +164,7 @@ export default function LegalReportView({ reportId, query, answer, sources, engi
                                         <span className="text-[10px] font-bold text-blue-500 uppercase tracking-widest mt-1">Professional Legal Engine</span>
                                     </div>
                                 </div>
-                                <h1 className="text-5xl font-black text-slate-900 tracking-tight leading-tight uppercase">Legal Consultation Report</h1>
+                                <h1 className="text-3xl md:text-5xl font-black text-slate-900 tracking-tight leading-tight uppercase">Legal Consultation Report</h1>
                                 <div className="flex items-center gap-3 text-sm text-slate-400 font-mono italic">
                                     <span>#{reportId}</span>
                                     <span className="w-1 h-1 bg-slate-200 rounded-full"></span>
@@ -179,7 +179,7 @@ export default function LegalReportView({ reportId, query, answer, sources, engi
                                     )}
                                 </div>
                             </div>
-                            <div className="flex flex-col items-end gap-2">
+                            <div className="flex flex-col items-center md:items-end gap-2 shrink-0">
                                 <div className="flex items-center gap-2 px-6 py-2 bg-blue-600 text-white rounded-full text-[12px] font-black tracking-widest border shadow-xl shadow-blue-500/30">
                                     <ShieldCheck size={14} /> VERIFIED
                                 </div>
@@ -195,11 +195,11 @@ export default function LegalReportView({ reportId, query, answer, sources, engi
                                 <HelpCircle size={14} className="text-slate-400" />
                                 Client Inquiry
                             </div>
-                            <div className="relative p-10 bg-white border-2 border-slate-100 rounded-[2.5rem] shadow-sm">
-                                <div className="absolute top-8 left-8 text-slate-100 select-none">
+                            <div className="relative p-6 md:p-10 bg-white border-2 border-slate-100 rounded-[1.5rem] md:rounded-[2.5rem] shadow-sm">
+                                <div className="absolute top-8 left-8 text-slate-100 select-none hidden md:block">
                                     <Scale size={64} />
                                 </div>
-                                <div className="relative text-xl text-slate-700 leading-relaxed font-semibold italic indent-6 whitespace-pre-wrap">
+                                <div className="relative text-lg md:text-xl text-slate-700 leading-relaxed font-semibold italic md:indent-6 whitespace-pre-wrap">
                                     "{query}"
                                 </div>
                             </div>
@@ -220,7 +220,7 @@ export default function LegalReportView({ reportId, query, answer, sources, engi
                                             <span className="text-lg font-black text-slate-300">01</span>
                                             <h3 className="text-2xl font-black text-slate-900 uppercase tracking-tight">사건 개요</h3>
                                         </div>
-                                        <div className="text-slate-700 pl-14 text-lg">
+                                        <div className="text-slate-700 pl-0 md:pl-14 text-base md:text-lg">
                                             {renderContent(sections.overview)}
                                         </div>
                                     </div>
@@ -233,7 +233,7 @@ export default function LegalReportView({ reportId, query, answer, sources, engi
                                             <span className="text-lg font-black text-slate-300">02</span>
                                             <h3 className="text-2xl font-black text-slate-900 uppercase tracking-tight">법률 분석</h3>
                                         </div>
-                                        <div className="text-slate-700 pl-14 text-lg">
+                                        <div className="text-slate-700 pl-0 md:pl-14 text-base md:text-lg">
                                             {renderContent(sections.analysis)}
                                         </div>
                                     </div>
@@ -246,8 +246,8 @@ export default function LegalReportView({ reportId, query, answer, sources, engi
                                             <span className="text-lg font-black text-blue-400">03</span>
                                             <h3 className="text-2xl font-black text-blue-600 uppercase tracking-tight">핵심 결론</h3>
                                         </div>
-                                        <div className="ml-14 relative">
-                                            <div className="relative bg-blue-50/50 shadow-sm border border-blue-100 p-12 rounded-[2rem] text-slate-900 text-xl font-medium leading-relaxed">
+                                        <div className="ml-0 md:ml-14 relative">
+                                            <div className="relative bg-blue-50/50 shadow-sm border border-blue-100 p-8 md:p-12 rounded-[1.5rem] md:rounded-[2.5rem] text-slate-900 text-lg md:text-xl font-medium leading-relaxed">
                                                 {renderContent(sections.conclusion)}
                                             </div>
                                         </div>
@@ -261,7 +261,7 @@ export default function LegalReportView({ reportId, query, answer, sources, engi
                                             <span className="text-lg font-black text-emerald-400">04</span>
                                             <h3 className="text-2xl font-black text-emerald-600 uppercase tracking-tight">향후 조치</h3>
                                         </div>
-                                        <div className="text-slate-700 pl-14 text-lg">
+                                        <div className="text-slate-700 pl-0 md:pl-14 text-base md:text-lg">
                                             {renderContent(sections.action)}
                                         </div>
                                     </div>
