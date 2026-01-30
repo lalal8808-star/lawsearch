@@ -79,7 +79,10 @@ export default function AuthModal({ isOpen, onClose, initialMode = "login" }: Au
             login(res.data.access_token, res.data.username, res.data.nickname);
             onClose();
         } catch (err: any) {
-            setError(err.response?.data?.detail || "작업에 실패했습니다.");
+            console.error("Auth error:", err);
+            const detail = err.response?.data?.detail;
+            const message = typeof detail === "string" ? detail : (err.message || "작업에 실패했습니다. (서버 연결 확인 필요)");
+            setError(message);
         } finally {
             setLoading(false);
         }
