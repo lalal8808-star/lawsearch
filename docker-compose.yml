@@ -21,6 +21,7 @@ services:
       dockerfile: frontend/Dockerfile
       args:
         - NEXT_PUBLIC_API_URL=http://localhost:8000
+        - IS_DOCKER=true
     ports:
       - "3000:3000"
     depends_on:

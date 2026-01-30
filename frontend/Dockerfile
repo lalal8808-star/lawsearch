@@ -18,6 +18,9 @@ COPY frontend/ .
 ARG NEXT_PUBLIC_API_URL
 ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
 
+ARG IS_DOCKER
+ENV IS_DOCKER=$IS_DOCKER
+
 RUN npm run build
 
 # Production image, copy all the files and run next
