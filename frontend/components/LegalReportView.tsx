@@ -6,7 +6,7 @@ import axios from "axios";
 import api from "@/utils/api";
 import { useAuth } from "@/context/AuthContext";
 import { motion, AnimatePresence } from "framer-motion";
-import ReportChatSidebar from "./ReportChatSidebar";
+import ReportChatSection from "./ReportChatSection";
 
 interface LegalReportViewProps {
     reportId: string;
@@ -135,14 +135,6 @@ export default function LegalReportView({ reportId, query, answer, sources, engi
                     <div className="max-w-3xl mx-auto space-y-16">
 
                         <div className="flex flex-col md:flex-row justify-end items-stretch md:items-center gap-3 print:hidden mb-12 border-b border-slate-100 pb-4">
-                            {!isNaN(parseInt(reportId)) && (
-                                <button
-                                    onClick={() => setIsChatOpen(true)}
-                                    className="flex items-center justify-center gap-2 px-6 py-3 md:py-2 bg-blue-600 text-white hover:bg-blue-700 rounded-xl transition-all text-sm font-bold shadow-lg shadow-blue-900/10"
-                                >
-                                    <MessageCircle size={16} /> AI 심층 질의
-                                </button>
-                            )}
                             <button
                                 onClick={() => window.print()}
                                 className="flex items-center justify-center gap-2 px-6 py-3 md:py-2 bg-slate-900 text-white hover:bg-slate-800 rounded-xl transition-all text-sm font-bold shadow-lg shadow-slate-900/20"
@@ -333,13 +325,5 @@ export default function LegalReportView({ reportId, query, answer, sources, engi
                 </div>
 
             </div>
-
-            <ReportChatSidebar
-                reportId={parseInt(reportId)}
-                isOpen={isChatOpen}
-                onClose={() => setIsChatOpen(false)}
-                initialHistory={chat_history}
-            />
-        </div>
-    );
+            );
 }

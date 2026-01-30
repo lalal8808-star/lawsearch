@@ -66,7 +66,7 @@ export default function HistorySidebar() {
     if (!mounted || !user) return null;
 
     return (
-        <div className="relative h-full flex items-start">
+        <div className="relative h-full hidden lg:flex items-start">
             <motion.div
                 animate={{ width: isOpen ? 320 : 0 }}
                 className="h-full bg-white/5 border-r border-white/10 flex flex-col overflow-hidden relative"
