@@ -6,7 +6,12 @@ import os
 
 # Database configuration
 db_dir = os.getenv("DATABASE_DIR", ".")
+if not os.path.exists(db_dir):
+    os.makedirs(db_dir, exist_ok=True)
+    print(f"Created database directory: {db_dir}")
+
 SQLALCHEMY_DATABASE_URL = f"sqlite:///{os.path.join(db_dir, 'law_history.db')}"
+print(f"Using database at: {SQLALCHEMY_DATABASE_URL}")
 
 engine = create_engine(
     SQLALCHEMY_DATABASE_URL, connect_args={"check_same_thread": False}

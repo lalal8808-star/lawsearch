@@ -25,7 +25,7 @@ export default function AIPanel() {
 
     useEffect(() => {
         scrollToBottom();
-    }, [messages, loading]);
+    }, [messages]);
 
     useEffect(() => {
         setMounted(true);
