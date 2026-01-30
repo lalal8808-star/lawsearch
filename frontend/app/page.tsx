@@ -4,6 +4,7 @@ import { motion } from "framer-motion";
 import AIPanel from "@/components/AIPanel";
 import UploadSection from "@/components/UploadSection";
 import HistorySidebar from "@/components/HistorySidebar";
+import MobileHistory from "@/components/MobileHistory";
 import { Scale, ShieldCheck, Download, Zap, User, Bell, History, Clock } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
 import { useState } from "react";
@@ -158,18 +159,8 @@ export default function Home() {
 
               <UploadSection />
 
-              {/* Mobile History View - Only visible on small screens */}
-              <div className="block lg:hidden pt-8 border-t border-white/5">
-                <div className="flex items-center gap-3 mb-6">
-                  <div className="w-8 h-8 bg-white/10 rounded-lg flex items-center justify-center">
-                    <History size={18} className="text-primary" />
-                  </div>
-                  <h3 className="font-black text-sm uppercase tracking-widest">Recent Reports</h3>
-                </div>
-                <div className="space-y-4">
-                  <p className="text-[10px] text-muted font-bold uppercase tracking-widest">모바일에서는 상단 메뉴 또는 보고서 내역에서 확인해 주세요.</p>
-                </div>
-              </div>
+              {/* Mobile History View - Logic moved to MobileHistory component */}
+              <MobileHistory />
             </div>
           </div>
 

@@ -19,7 +19,6 @@ interface LegalReportViewProps {
 
 export default function LegalReportView({ reportId, query, answer, sources, engine, chat_history = [] }: LegalReportViewProps) {
     const [mounted, setMounted] = useState(false);
-    const [isChatOpen, setIsChatOpen] = useState(false);
     const { user } = useAuth();
     const [subscribedLaws, setSubscribedLaws] = useState<string[]>([]);
     const [submittingLaw, setSubmittingLaw] = useState<string | null>(null);
@@ -311,6 +310,11 @@ export default function LegalReportView({ reportId, query, answer, sources, engi
                             </div>
                         </section>
 
+                        {/* Integrated Follow-up Chat */}
+                        {!isNaN(parseInt(reportId)) && (
+                            <ReportChatSection reportId={parseInt(reportId)} initialHistory={chat_history} />
+                        )}
+
                         <div className="flex flex-col items-center gap-6 pt-20 border-t border-slate-100 opacity-40 select-none pb-12">
                             <div className="flex items-center gap-3 text-slate-400 grayscale">
                                 <Scale size={20} />
@@ -323,7 +327,7 @@ export default function LegalReportView({ reportId, query, answer, sources, engi
                         </div>
                     </div>
                 </div>
-
             </div>
-            );
+        </div>
+    );
 }
