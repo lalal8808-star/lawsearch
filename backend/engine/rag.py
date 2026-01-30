@@ -41,7 +41,7 @@ class RAGEngine:
             collection_name="law_collection"
         )
         self.chat_llm = ChatGoogleGenerativeAI(
-            model="gemini-2.0-flash-lite", 
+            model="gemini-1.5-flash", 
             temperature=0.7,
             google_api_key=GOOGLE_API_KEY
         )
@@ -382,9 +382,9 @@ class RAGEngine:
 
 class VisionEngine:
     def __init__(self):
-        # Using gemini-2.0-flash-lite which supports multimodal
+        # Using gemini-1.5-flash which supports multimodal
         self.vision_llm = ChatGoogleGenerativeAI(
-            model="gemini-2.0-flash-lite", 
+            model="gemini-1.5-flash", 
             temperature=0,
             google_api_key=GOOGLE_API_KEY
         )
