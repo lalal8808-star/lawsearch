@@ -245,7 +245,7 @@ class RAGEngine:
             }
 
         try:
-            if not self.vector_store:
+            if not self.vector_store or not self.supabase_client:
                 return {
                     "answer": "죄송합니다. 현재 법률 데이터베이스(Vector DB)가 연결되어 있지 않아 정확한 검토가 어렵습니다. 관리자에게 문의하여 Supabase 설정을 확인해주세요.",
                     "sources": [],
@@ -253,18 +253,45 @@ class RAGEngine:
                     "engine": "Fallback"
                 }
 
-            retriever = self.vector_store.as_retriever(search_kwargs=search_kwargs)
-            # LangChain retrievers support ainvoke
-            docs = await retriever.ainvoke(user_query)
+            # 3. Direct RPC call to bypass LangChain's buggy SupabaseVectorStore retriever
+            # This fix is robust against version conflicts between langchain-community and supabase-py
+            query_embedding = await self.embeddings.aembed_query(user_query)
             
-            # 3. Dynamic Re-ranking
+            rpc_params = {
+                "query_embedding": query_embedding,
+                "match_threshold": 0.3, # Permissive threshold for initial retrieval
+                "match_count": 25,      # Fetch more for manual Python-side filtering
+            }
+            
+            # Use direct RPC call
+            rpc_response = self.supabase_client.rpc("match_documents", rpc_params).execute()
+            
+            docs = []
+            for item in rpc_response.data:
+                metadata = item.get("metadata", {})
+                content = item.get("content", "")
+                
+                # Apply filters manually to ensure consistent behavior
+                if target_sources:
+                    is_target = metadata.get("source") in target_sources
+                    is_upload = metadata.get("type") == "user_upload"
+                    is_precedent = metadata.get("type") == "precedent"
+                    if not (is_target or is_upload or is_precedent):
+                        continue
+                
+                docs.append(Document(page_content=content, metadata=metadata))
+            
+            # 4. Limit to top results and constructed context
+            docs = docs[:15]
+            
+            # 5. Dynamic Re-ranking
             keywords = [k for k in re.split(r'\s+', user_query) if len(k) > 1]
             for doc in docs:
                 doc.metadata['boost'] = sum(10 for kw in keywords if kw in doc.page_content)
             
             docs = sorted(docs, key=lambda x: x.metadata.get('boost', 0), reverse=True)
 
-            # 4. Prompt Construction
+            # 6. Prompt Construction
             context_parts = []
             seen_contents = set()
             sources_list = []

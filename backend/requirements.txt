@@ -15,5 +15,5 @@ PyJWT
 bcrypt
 psycopg2-binary
 SQLAlchemy
-supabase==1.0.3
+supabase
 
