@@ -4,9 +4,6 @@ import asyncio
 import base64
 from dotenv import load_dotenv
 from langchain_google_genai import GoogleGenerativeAIEmbeddings, ChatGoogleGenerativeAI
-from langchain_community.vectorstores import SupabaseVectorStore
-from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain_core.documents import Document
 from typing import List, Dict, Any, Optional
 from supabase.client import create_client, Client
 
@@ -40,18 +37,12 @@ class RAGEngine:
         )
         
         self.supabase_client: Optional[Client] = None
-        self.vector_store: Optional[SupabaseVectorStore] = None
         
         if SUPABASE_URL and SUPABASE_KEY:
             self.supabase_client = create_client(SUPABASE_URL, SUPABASE_KEY)
-            self.vector_store = SupabaseVectorStore(
-                client=self.supabase_client,
-                embedding=self.embeddings,
-                table_name="documents",
-                query_name="match_documents",
-            )
+            print("Supabase client initialized.")
         else:
-            print("SupabaseVectorStore NOT initialized due to missing credentials.")
+            print("Supabase client NOT initialized due to missing credentials.")
 
         self.chat_llm = ChatGoogleGenerativeAI(
             model="gemini-2.0-flash-lite", 
@@ -131,24 +122,39 @@ class RAGEngine:
             self._refresh_metadata_cache()
         return list(self._metadata_cache['msts'])
 
-    def add_documents(self, documents: List[Document]):
+    async def add_documents(self, documents: List[Document]):
         """
-        Add documents to the vector store with chunking and batching.
+        Add documents to the vector store with chunking and direct Supabase insertion.
         """
-        if not self.vector_store:
-            print("Warning: Cannot add documents. Vector store not initialized.")
+        if not self.supabase_client:
+            print("Warning: Cannot add documents. Supabase client not initialized.")
             return
 
         text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=100)
         chunks = text_splitter.split_documents(documents)
         if chunks:
+            print(f"Adding {len(chunks)} chunks to Supabase...")
             # Batch processing for stability
-            batch_size = 100
+            batch_size = 50
             for i in range(0, len(chunks), batch_size):
-                self.vector_store.add_documents(chunks[i:i+batch_size])
+                batch = chunks[i:i+batch_size]
+                
+                # Prepare data for direct Supabase insert
+                records = []
+                for doc in batch:
+                    embedding = await self.embeddings.aembed_query(doc.page_content)
+                    records.append({
+                        "content": doc.page_content,
+                        "metadata": doc.metadata,
+                        "embedding": embedding
+                    })
+                
+                if records:
+                    self.supabase_client.table("documents").insert(records).execute()
+            
             # Invalidate cache
             self._metadata_cache = None
-            print(f"Added {len(chunks)} chunks.")
+            print(f"Successfully added {len(chunks)} chunks.")
 
     def delete_documents_by_mst(self, mst: str):
         """
@@ -245,7 +251,7 @@ class RAGEngine:
             }
 
         try:
-            if not self.vector_store or not self.supabase_client:
+            if not self.supabase_client:
                 return {
                     "answer": "죄송합니다. 현재 법률 데이터베이스(Vector DB)가 연결되어 있지 않아 정확한 검토가 어렵습니다. 관리자에게 문의하여 Supabase 설정을 확인해주세요.",
                     "sources": [],
@@ -392,12 +398,19 @@ class RAGEngine:
             if response.data:
                 return response.data[0]['content']
             
-            # Fallback: simple vector search if metadata filter fails
-            if self.vector_store:
-                search_query = f"[{law_name}] {article_no}"
-                fallback_results = self.vector_store.similarity_search(search_query, k=1)
-                if fallback_results and law_name in fallback_results[0].metadata.get("source", ""):
-                    return fallback_results[0].page_content
+            # Fallback: simple vector search via RPC if metadata filter fails
+            query_embedding = self.embeddings.embed_query(f"[{law_name}] {article_no}")
+            rpc_params = {
+                "query_embedding": query_embedding,
+                "match_threshold": 0.5,
+                "match_count": 1,
+            }
+            fallback_response = self.supabase_client.rpc("match_documents", rpc_params).execute()
+            
+            if fallback_response.data:
+                item = fallback_response.data[0]
+                if law_name in item.get("metadata", {}).get("source", ""):
+                    return item.get("content")
 
             return None
         except Exception as e:

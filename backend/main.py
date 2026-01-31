@@ -28,6 +28,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 app = FastAPI(title="JongLaw AI API")
+logger.info("JongLaw AI API Starting up... [Final RPC Fix Applied]")
 
 # Initialize DB on startup
 database.init_db()
