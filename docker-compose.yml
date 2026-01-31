@@ -3,8 +3,8 @@ version: '3.8'
 services:
   backend:
     build:
-      context: .
-      dockerfile: backend/Dockerfile
+      context: ./backend
+      dockerfile: Dockerfile
     ports:
       - "8000:8000"
     volumes:
@@ -17,8 +17,8 @@ services:
 
   frontend:
     build:
-      context: .
-      dockerfile: frontend/Dockerfile
+      context: ./frontend
+      dockerfile: Dockerfile
       args:
         - NEXT_PUBLIC_API_URL=http://localhost:8000
         - IS_DOCKER=true
