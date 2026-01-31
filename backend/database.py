@@ -4,8 +4,40 @@ from sqlalchemy.orm import sessionmaker, relationship
 from datetime import datetime
 import os
 
+import urllib.parse
+
 # Database configuration
-SQLALCHEMY_DATABASE_URL = os.getenv("SUPABASE_DB_URL")
+raw_url = os.getenv("SUPABASE_DB_URL", "")
+
+def sanitize_db_url(url: str) -> str:
+    if not url:
+        return ""
+    
+    # 1. Clean whitespace and unexpected quotes/brackets
+    url = url.strip().strip("'\"[] ")
+    
+    # 2. Fix the prefix for SQLAlchemy 1.4+
+    if url.startswith("postgres://"):
+        url = url.replace("postgres://", "postgresql://", 1)
+    
+    # 3. Handle special characters in password (URL encoding)
+    try:
+        if "@" in url and "://" in url:
+            scheme_part, rest = url.split("://", 1)
+            auth_part, host_part = rest.split("@", 1)
+            
+            if ":" in auth_part:
+                user, password = auth_part.split(":", 1)
+                # Only encode if it's not already encoded (doesn't contain %)
+                if "%" not in password:
+                    encoded_password = urllib.parse.quote_plus(password)
+                    url = f"{scheme_part}://{user}:{encoded_password}@{host_part}"
+    except Exception as e:
+        print(f"URL parsing/encoding utility warning: {e}")
+        
+    return url
+
+SQLALCHEMY_DATABASE_URL = sanitize_db_url(raw_url)
 
 if not SQLALCHEMY_DATABASE_URL:
     # Fallback for development if SUPABASE_DB_URL is not provided
@@ -15,13 +47,6 @@ if not SQLALCHEMY_DATABASE_URL:
     SQLALCHEMY_DATABASE_URL = f"sqlite:///{os.path.join(db_dir, 'law_history.db')}"
     print(f"Warning: SUPABASE_DB_URL not found. Using local SQLite at: {SQLALCHEMY_DATABASE_URL}")
 else:
-    # SQLAlchemy 1.4+ requires 'postgresql://' instead of 'postgres://'
-    if SQLALCHEMY_DATABASE_URL.startswith("postgres://"):
-        SQLALCHEMY_DATABASE_URL = SQLALCHEMY_DATABASE_URL.replace("postgres://", "postgresql://", 1)
-    
-    # Remove any outer brackets if accidentally included (common user mistake)
-    SQLALCHEMY_DATABASE_URL = SQLALCHEMY_DATABASE_URL.strip("[]")
-    
     # Mask password for safe logging
     safe_log_url = SQLALCHEMY_DATABASE_URL.split("@")[-1] if "@" in SQLALCHEMY_DATABASE_URL else "invalid-url"
     print(f"Database connection attempt: postgresql://****@{safe_log_url}")
