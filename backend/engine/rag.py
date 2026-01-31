@@ -4,6 +4,8 @@ import asyncio
 import base64
 from dotenv import load_dotenv
 from langchain_google_genai import GoogleGenerativeAIEmbeddings, ChatGoogleGenerativeAI
+from langchain_text_splitters import RecursiveCharacterTextSplitter
+from langchain_core.documents import Document
 from typing import List, Dict, Any, Optional
 from supabase.client import create_client, Client
 
