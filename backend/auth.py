@@ -12,7 +12,7 @@ from database import User, get_db
 SECRET_KEY = os.getenv("SECRET_KEY", "jonglaw_secret_key_2026_xyz")
 # Supabase JWT Secret (New)
 SUPABASE_JWT_SECRET = os.getenv("SUPABASE_JWT_SECRET")
-ALGORITHM = "HS256"
+ALGORITHMS = ["HS256", "HS384", "HS512"]
 ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24 * 7 # 1 week
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="auth/login")
@@ -37,7 +37,7 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
     else:
         expire = datetime.utcnow() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
     to_encode.update({"exp": expire})
-    encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+    encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm="HS256")
     return encoded_jwt
 
 async def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)):
@@ -53,11 +53,11 @@ async def get_current_user(token: str = Depends(oauth2_scheme), db: Session = De
         try:
             # Supabase tokens often have 'aud': 'authenticated'
             # We try with audience first
-            payload = jwt.decode(token, SUPABASE_JWT_SECRET, algorithms=[ALGORITHM], audience="authenticated")
+            payload = jwt.decode(token, SUPABASE_JWT_SECRET, algorithms=ALGORITHMS, audience="authenticated")
         except jwt.InvalidAudienceError:
             # Fallback: decode without audience check if it's the only issue
             try:
-                payload = jwt.decode(token, SUPABASE_JWT_SECRET, algorithms=[ALGORITHM])
+                payload = jwt.decode(token, SUPABASE_JWT_SECRET, algorithms=ALGORITHMS)
             except Exception as e:
                 print(f"Supabase JWT decode fallback failed: {e}")
                 payload = None
@@ -68,7 +68,7 @@ async def get_current_user(token: str = Depends(oauth2_scheme), db: Session = De
     # 2. Try Legacy Secret if Supabase failed or wasn't configured
     if payload is None:
         try:
-            payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+            payload = jwt.decode(token, SECRET_KEY, algorithms=ALGORITHMS)
         except Exception as e:
             print(f"Legacy JWT decode failed: {e}")
             raise credentials_exception
@@ -99,12 +99,28 @@ async def get_current_user_optional(request: Request, db: Session = Depends(get_
     if not auth_header or not auth_header.startswith("Bearer "):
         return None
     token = auth_header.split(" ")[1]
-    try:
-        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        username: str = payload.get("sub")
-        if username is None:
+    
+    payload = None
+    # 1. Try Supabase JWT
+    if SUPABASE_JWT_SECRET:
+        try:
+            payload = jwt.decode(token, SUPABASE_JWT_SECRET, algorithms=ALGORITHMS, audience="authenticated")
+        except Exception:
+            try:
+                payload = jwt.decode(token, SUPABASE_JWT_SECRET, algorithms=ALGORITHMS)
+            except Exception:
+                payload = None
+                
+    # 2. Try Legacy Secret
+    if payload is None:
+        try:
+            payload = jwt.decode(token, SECRET_KEY, algorithms=ALGORITHMS)
+        except Exception:
             return None
-        user = db.query(User).filter(User.username == username).first()
-        return user
-    except Exception:
+            
+    sub: str = payload.get("sub")
+    if sub is None:
         return None
+        
+    user = db.query(User).filter((User.supabase_id == sub) | (User.username == sub)).first()
+    return user
