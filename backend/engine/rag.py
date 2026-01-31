@@ -338,7 +338,7 @@ class RAGEngine:
                 "engine": llm.model_name if hasattr(llm, 'model_name') else llm.model
             }
         except Exception as e:
-            print(f"Error in modernized query: {e}")
+            print(f"Error in modernized query [v2-rpc-fix]: {e}")
             raise e
 
     async def query_followup(self, user_query: str, report_context: str, chat_history: List[Dict[str, str]]) -> Dict[str, Any]:
