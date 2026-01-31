@@ -66,10 +66,7 @@ export default function LegalReportView({ reportId, query, answer, sources, engi
     };
 
     const getApiUrl = () => {
-        if (typeof window !== "undefined") {
-            return window.location.hostname === "localhost" ? "http://localhost:8000" : "http://127.0.0.1:8000";
-        }
-        return "http://127.0.0.1:8000";
+        return api.defaults.baseURL || "";
     };
 
     // Clean markdown and artifacts

@@ -15,6 +15,14 @@ import auth
 from database import User, Report, get_db, Subscription, Notification
 import logging
 
+from pydantic import BaseModel
+
+# Sync request model
+class SyncRequest(BaseModel):
+    supabase_id: str
+    username: str
+    nickname: Optional[str] = None
+
 # Setup Logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -99,6 +107,34 @@ async def update_profile(
     db.commit()
     db.refresh(current_user)
     return {"username": current_user.username, "nickname": current_user.nickname, "detail": "Profile updated successfully"}
+
+@app.post("/auth/sync")
+async def sync_user(request: SyncRequest, db: Session = Depends(get_db)):
+    # Check if user already exists in our DB by supabase_id
+    user = db.query(User).filter(User.supabase_id == request.supabase_id).first()
+    
+    if not user:
+        # Check if a legacy user with the same email (username) exists
+        user = db.query(User).filter(User.username == request.username).first()
+        if user:
+            # Link existing user to Supabase
+            user.supabase_id = request.supabase_id
+        else:
+            # Create new user record
+            user = User(
+                supabase_id=request.supabase_id,
+                username=request.username,
+                nickname=request.nickname
+            )
+            db.add(user)
+    else:
+        # Just update nickname if provided and different
+        if request.nickname and user.nickname != request.nickname:
+            user.nickname = request.nickname
+            
+    db.commit()
+    db.refresh(user)
+    return {"status": "synced", "nickname": user.nickname}
 
 # --- Law Endpoints ---
 

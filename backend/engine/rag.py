@@ -4,20 +4,23 @@ import asyncio
 import base64
 from dotenv import load_dotenv
 from langchain_google_genai import GoogleGenerativeAIEmbeddings, ChatGoogleGenerativeAI
-from langchain_chroma import Chroma
+from langchain_community.vectorstores import SupabaseVectorStore
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_core.documents import Document
 from typing import List, Dict, Any, Optional
+from supabase.client import create_client, Client
 
 load_dotenv()
 
 # RAG and Vector DB Configuration
-db_dir = os.getenv("DATABASE_DIR", ".")
-CHROMA_PATH = os.path.join(db_dir, "chroma_db")
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
+SUPABASE_URL = os.getenv("SUPABASE_URL")
+SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
 
 if not GOOGLE_API_KEY:
     print("CRITICAL ERROR: GOOGLE_API_KEY is not set in environment variables!")
+if not SUPABASE_URL or not SUPABASE_KEY:
+    print("WARNING: Supabase credentials not fully set. Vector store may not function.")
 
 class RAGEngine:
     async def __aenter__(self):
@@ -35,18 +38,28 @@ class RAGEngine:
             model="models/gemini-embedding-001",
             google_api_key=GOOGLE_API_KEY
         )
-        self.vector_store = Chroma(
-            persist_directory=CHROMA_PATH,
-            embedding_function=self.embeddings,
-            collection_name="law_collection"
-        )
+        
+        self.supabase_client: Optional[Client] = None
+        self.vector_store: Optional[SupabaseVectorStore] = None
+        
+        if SUPABASE_URL and SUPABASE_KEY:
+            self.supabase_client = create_client(SUPABASE_URL, SUPABASE_KEY)
+            self.vector_store = SupabaseVectorStore(
+                client=self.supabase_client,
+                embedding=self.embeddings,
+                table_name="documents",
+                query_name="match_documents",
+            )
+        else:
+            print("SupabaseVectorStore NOT initialized due to missing credentials.")
+
         self.chat_llm = ChatGoogleGenerativeAI(
             model="gemini-2.0-flash-lite", 
             temperature=0.7,
             google_api_key=GOOGLE_API_KEY
         )
         self.report_llm = ChatGoogleGenerativeAI(
-            model="gemini-3-pro-preview", 
+            model="gemini-2.0-flash-lite", # Changed from gemini-3-pro-preview to flash-lite for cost/speed, upgrade if needed
             temperature=0,
             google_api_key=GOOGLE_API_KEY
         )
@@ -55,17 +68,23 @@ class RAGEngine:
     def _refresh_metadata_cache(self):
         """
         Refresh the memory cache of synced sources and MSTs.
-        [Warning] High-performance optimization: We now only fetch recent metadatas 
-        to avoid loading the entire DB into memory.
+        Using Supabase client for efficient metadata fetching.
         """
         try:
-            print("Refreshing metadata cache (optimized)...")
-            # For better scalability, we could use a separate DB or a more efficient set operation.
-            # Here we limit the initial scan to avoid memory crashes on massive datasets.
-            results = self.vector_store.get(include=['metadatas'], limit=1000)
+            print("Refreshing metadata cache via Supabase...")
+            if not self.supabase_client:
+                self._metadata_cache = {'sources': set(), 'msts': set()}
+                return
+
+            # Fetch distinct sources and msts from metadata column
+            # Note: Supabase/PostgreSQL doesn't easily support distinct on JSONB fields without complex queries.
+            # We'll fetch the last 1000 items and extract metadata manually for the cache.
+            response = self.supabase_client.table("documents").select("metadata").limit(1000).execute()
+            
             sources = set()
             msts = set()
-            for meta in results['metadatas']:
+            for row in response.data:
+                meta = row.get('metadata', {})
                 if not meta: continue
                 if 'source' in meta: sources.add(meta['source'])
                 if 'mst' in meta: msts.add(str(meta['mst']))
@@ -116,6 +135,10 @@ class RAGEngine:
         """
         Add documents to the vector store with chunking and batching.
         """
+        if not self.vector_store:
+            print("Warning: Cannot add documents. Vector store not initialized.")
+            return
+
         text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=100)
         chunks = text_splitter.split_documents(documents)
         if chunks:
@@ -132,12 +155,14 @@ class RAGEngine:
         Delete documents with a specific MST from the vector store.
         """
         try:
-            results = self.vector_store.get(where={"mst": str(mst)})
-            if results['ids']:
-                self.vector_store.delete(ids=results['ids'])
-                print(f"Deleted {len(results['ids'])} segments for MST {mst}")
-                # Invalidate cache
-                self._metadata_cache = None
+            if not self.supabase_client: return
+            
+            # Direct deletion via Supabase client for metadata filtering
+            # documents.metadata @> '{"mst": "..."}'
+            self.supabase_client.table("documents").delete().filter("metadata->>mst", "eq", str(mst)).execute()
+            print(f"Deleted segments for MST {mst} from Supabase")
+            # Invalidate cache
+            self._metadata_cache = None
         except Exception as e:
             print(f"Error deleting documents: {e}")
 
@@ -220,6 +245,14 @@ class RAGEngine:
             }
 
         try:
+            if not self.vector_store:
+                return {
+                    "answer": "죄송합니다. 현재 법률 데이터베이스(Vector DB)가 연결되어 있지 않아 정확한 검토가 어렵습니다. 관리자에게 문의하여 Supabase 설정을 확인해주세요.",
+                    "sources": [],
+                    "intent": intent,
+                    "engine": "Fallback"
+                }
+
             retriever = self.vector_store.as_retriever(search_kwargs=search_kwargs)
             # LangChain retrievers support ainvoke
             docs = await retriever.ainvoke(user_query)
@@ -313,30 +346,31 @@ class RAGEngine:
         Retrieve the full text of a specific article from a law.
         """
         try:
+            if not self.supabase_client: return None
+            
             # article_no might be "제750조" or "제750"
             if not article_no.startswith("제"):
                 article_no = "제" + article_no
             if not article_no.endswith("조"):
                 article_no = article_no + "조"
 
-            results = self.vector_store.get(
-                where={
-                    "$and": [
-                        {"source": law_name},
-                        {"article_no": article_no}
-                    ]
-                }
-            )
+            # Filter by source and article_no in metadata JSONB
+            response = self.supabase_client.table("documents") \
+                .select("content") \
+                .filter("metadata->>source", "eq", law_name) \
+                .filter("metadata->>article_no", "eq", article_no) \
+                .limit(1) \
+                .execute()
             
-            if results['documents']:
-                # Return the first matching segment (usually there's only one for a specific article)
-                return results['documents'][0]
+            if response.data:
+                return response.data[0]['content']
             
-            # Fallback: simple text search if metadata filter fails
-            search_query = f"[{law_name}] {article_no}"
-            fallback_results = self.vector_store.similarity_search(search_query, k=1)
-            if fallback_results and law_name in fallback_results[0].metadata.get("source", ""):
-                return fallback_results[0].page_content
+            # Fallback: simple vector search if metadata filter fails
+            if self.vector_store:
+                search_query = f"[{law_name}] {article_no}"
+                fallback_results = self.vector_store.similarity_search(search_query, k=1)
+                if fallback_results and law_name in fallback_results[0].metadata.get("source", ""):
+                    return fallback_results[0].page_content
 
             return None
         except Exception as e:
@@ -348,9 +382,16 @@ class RAGEngine:
         Retrieve unique source names for user-uploaded documents.
         """
         try:
-            results = self.vector_store.get(where={"type": "user_upload"}, include=['metadatas'])
+            if not self.supabase_client: return []
+            
+            response = self.supabase_client.table("documents") \
+                .select("metadata") \
+                .filter("metadata->>type", "eq", "user_upload") \
+                .execute()
+                
             sources = set()
-            for meta in results['metadatas']:
+            for row in response.data:
+                meta = row.get('metadata', {})
                 if meta and 'source' in meta:
                     sources.add(meta['source'])
             return sorted(list(sources))
@@ -363,19 +404,16 @@ class RAGEngine:
         Delete all segments of a specific user-uploaded source.
         """
         try:
-            # Note: ChromaDB $and requires at least two conditions
-            results = self.vector_store.get(
-                where={
-                    "$and": [
-                        {"type": "user_upload"},
-                        {"source": source_name}
-                    ]
-                }
-            )
-            if results['ids']:
-                self.vector_store.delete(ids=results['ids'])
-                print(f"Deleted {len(results['ids'])} segments for uploaded source: {source_name}")
-                self._metadata_cache = None
+            if not self.supabase_client: return
+            
+            self.supabase_client.table("documents") \
+                .delete() \
+                .filter("metadata->>type", "eq", "user_upload") \
+                .filter("metadata->>source", "eq", source_name) \
+                .execute()
+                
+            print(f"Deleted segments for uploaded source: {source_name} from Supabase")
+            self._metadata_cache = None
         except Exception as e:
             print(f"Error deleting user upload {source_name}: {e}")
 

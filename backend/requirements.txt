@@ -15,4 +15,8 @@ langchain-core
 python-multipart
 PyJWT
 bcrypt
+psycopg2-binary
 SQLAlchemy
+supabase
+vecs
+

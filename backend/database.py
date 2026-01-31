@@ -5,16 +5,22 @@ from datetime import datetime
 import os
 
 # Database configuration
-db_dir = os.getenv("DATABASE_DIR", ".")
-if not os.path.exists(db_dir):
-    os.makedirs(db_dir, exist_ok=True)
-    print(f"Created database directory: {db_dir}")
+SQLALCHEMY_DATABASE_URL = os.getenv("SUPABASE_DB_URL")
 
-SQLALCHEMY_DATABASE_URL = f"sqlite:///{os.path.join(db_dir, 'law_history.db')}"
-print(f"Using database at: {SQLALCHEMY_DATABASE_URL}")
+if not SQLALCHEMY_DATABASE_URL:
+    # Fallback for development if SUPABASE_DB_URL is not provided
+    db_dir = os.getenv("DATABASE_DIR", ".")
+    if not os.path.exists(db_dir):
+        os.makedirs(db_dir, exist_ok=True)
+    SQLALCHEMY_DATABASE_URL = f"sqlite:///{os.path.join(db_dir, 'law_history.db')}"
+    print(f"Warning: SUPABASE_DB_URL not found. Using local SQLite at: {SQLALCHEMY_DATABASE_URL}")
+else:
+    print(f"Using Supabase PostgreSQL database.")
 
 engine = create_engine(
-    SQLALCHEMY_DATABASE_URL, connect_args={"check_same_thread": False}
+    SQLALCHEMY_DATABASE_URL,
+    # Remove check_same_thread for PostgreSQL as it's SQLite specific
+    connect_args={"check_same_thread": False} if SQLALCHEMY_DATABASE_URL.startswith("sqlite") else {}
 )
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
@@ -24,9 +30,10 @@ class User(Base):
     __tablename__ = "users"
 
     id = Column(Integer, primary_key=True, index=True)
+    supabase_id = Column(String, unique=True, index=True, nullable=True) # Linked Supabase UUID
     username = Column(String, unique=True, index=True)
     nickname = Column(String, nullable=True)
-    hashed_password = Column(String)
+    hashed_password = Column(String, nullable=True) # Optional for Google users
     created_at = Column(DateTime, default=datetime.utcnow)
 
     reports = relationship("Report", back_populates="owner")

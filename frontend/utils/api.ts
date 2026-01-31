@@ -36,12 +36,19 @@ api.interceptors.response.use(
     (response) => response,
     (error) => {
         if (error.response?.status === 401) {
-            if (typeof window !== "undefined" && localStorage.getItem("jonglaw_token")) {
+            const isSync = error.config?.url?.includes("/auth/sync");
+            if (typeof window !== "undefined" && localStorage.getItem("jonglaw_token") && !isSync) {
                 localStorage.removeItem("jonglaw_token");
                 localStorage.removeItem("jonglaw_user");
                 localStorage.removeItem("jonglaw_nickname");
-                // Only reload if we're not already on a page that handles login
-                window.location.reload();
+
+                // Only reload if not already reloaded in the last 10 seconds to avoid loops
+                const lastReload = sessionStorage.getItem("last_401_reload");
+                const now = Date.now();
+                if (!lastReload || now - parseInt(lastReload) > 10000) {
+                    sessionStorage.setItem("last_401_reload", now.toString());
+                    window.location.reload();
+                }
             }
         }
         return Promise.reject(error);

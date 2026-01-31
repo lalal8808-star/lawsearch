@@ -8,8 +8,10 @@ from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy.orm import Session
 from database import User, get_db
 
-# Secret key to sign JWT
+# Secret key to sign JWT (Legacy)
 SECRET_KEY = os.getenv("SECRET_KEY", "jonglaw_secret_key_2026_xyz")
+# Supabase JWT Secret (New)
+SUPABASE_JWT_SECRET = os.getenv("SUPABASE_JWT_SECRET")
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24 * 7 # 1 week
 
@@ -44,15 +46,48 @@ async def get_current_user(token: str = Depends(oauth2_scheme), db: Session = De
         detail="Could not validate credentials",
         headers={"WWW-Authenticate": "Bearer"},
     )
-    try:
-        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        username: str = payload.get("sub")
-        if username is None:
-            raise credentials_exception
-    except Exception:
-        raise credentials_exception
     
-    user = db.query(User).filter(User.username == username).first()
+    payload = None
+    # 1. Try Supabase JWT Secret
+    if SUPABASE_JWT_SECRET:
+        try:
+            # Supabase tokens often have 'aud': 'authenticated'
+            # We try with audience first
+            payload = jwt.decode(token, SUPABASE_JWT_SECRET, algorithms=[ALGORITHM], audience="authenticated")
+        except jwt.InvalidAudienceError:
+            # Fallback: decode without audience check if it's the only issue
+            try:
+                payload = jwt.decode(token, SUPABASE_JWT_SECRET, algorithms=[ALGORITHM])
+            except Exception as e:
+                print(f"Supabase JWT decode fallback failed: {e}")
+                payload = None
+        except Exception as e:
+            print(f"Supabase JWT decode failed: {e}")
+            payload = None
+
+    # 2. Try Legacy Secret if Supabase failed or wasn't configured
+    if payload is None:
+        try:
+            payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        except Exception as e:
+            print(f"Legacy JWT decode failed: {e}")
+            raise credentials_exception
+    
+    # Extract identity
+    # Supabase uses 'sub' for UUID
+    # Legacy uses 'sub' for username
+    sub: str = payload.get("sub")
+    if sub is None:
+        raise credentials_exception
+        
+    # Look up user
+    # Try by supabase_id first
+    user = db.query(User).filter(User.supabase_id == sub).first()
+    
+    # If not found, try by username (for legacy users)
+    if user is None:
+        user = db.query(User).filter(User.username == sub).first()
+        
     if user is None:
         raise credentials_exception
     return user
