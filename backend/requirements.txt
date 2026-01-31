@@ -16,6 +16,5 @@ bcrypt
 psycopg2-binary
 SQLAlchemy
 supabase==1.0.3
-postgrest==0.10.7
-vecs
+postgrest==0.10.10
 
