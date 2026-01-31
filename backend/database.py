@@ -15,14 +15,27 @@ if not SQLALCHEMY_DATABASE_URL:
     SQLALCHEMY_DATABASE_URL = f"sqlite:///{os.path.join(db_dir, 'law_history.db')}"
     print(f"Warning: SUPABASE_DB_URL not found. Using local SQLite at: {SQLALCHEMY_DATABASE_URL}")
 else:
-    print(f"Using Supabase PostgreSQL database.")
+    # SQLAlchemy 1.4+ requires 'postgresql://' instead of 'postgres://'
+    if SQLALCHEMY_DATABASE_URL.startswith("postgres://"):
+        SQLALCHEMY_DATABASE_URL = SQLALCHEMY_DATABASE_URL.replace("postgres://", "postgresql://", 1)
+    
+    # Remove any outer brackets if accidentally included (common user mistake)
+    SQLALCHEMY_DATABASE_URL = SQLALCHEMY_DATABASE_URL.strip("[]")
+    
+    # Mask password for safe logging
+    safe_log_url = SQLALCHEMY_DATABASE_URL.split("@")[-1] if "@" in SQLALCHEMY_DATABASE_URL else "invalid-url"
+    print(f"Database connection attempt: postgresql://****@{safe_log_url}")
 
-engine = create_engine(
-    SQLALCHEMY_DATABASE_URL,
-    # Remove check_same_thread for PostgreSQL as it's SQLite specific
-    connect_args={"check_same_thread": False} if SQLALCHEMY_DATABASE_URL.startswith("sqlite") else {}
-)
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+try:
+    engine = create_engine(
+        SQLALCHEMY_DATABASE_URL,
+        # Remove check_same_thread for PostgreSQL as it's SQLite specific
+        connect_args={"check_same_thread": False} if SQLALCHEMY_DATABASE_URL.startswith("sqlite") else {}
+    )
+    SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+except Exception as e:
+    print(f"CRITICAL: Failed to create SQLAlchemy engine: {e}")
+    raise
 
 Base = declarative_base()
 
