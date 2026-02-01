@@ -12,7 +12,7 @@ from database import User, get_db
 SECRET_KEY = os.getenv("SECRET_KEY", "jonglaw_secret_key_2026_xyz")
 # Supabase JWT Secret (New)
 SUPABASE_JWT_SECRET = os.getenv("SUPABASE_JWT_SECRET")
-ALGORITHMS = ["HS256", "HS384", "HS512"]
+ALGORITHMS = ["HS256", "HS384", "HS512", "RS256"]
 ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24 * 7 # 1 week
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="auth/login")
@@ -48,6 +48,13 @@ async def get_current_user(token: str = Depends(oauth2_scheme), db: Session = De
     )
     
     payload = None
+    # Diagnostic: check header
+    try:
+        header = jwt.get_unverified_header(token)
+        print(f"DEBUG: Token header={header}")
+    except Exception as he:
+        print(f"DEBUG: Could not read token header: {he}")
+
     # 1. Try Supabase JWT Secret
     if SUPABASE_JWT_SECRET:
         try:

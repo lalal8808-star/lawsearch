@@ -111,6 +111,7 @@ async def update_profile(
 
 @app.post("/auth/sync")
 async def sync_user(request: SyncRequest, db: Session = Depends(get_db)):
+    logger.info(f"DEBUG: /auth/sync received for supabase_id={request.supabase_id}, email={request.username}")
     # Check if user already exists in our DB by supabase_id
     user = db.query(User).filter(User.supabase_id == request.supabase_id).first()
     
@@ -119,9 +120,10 @@ async def sync_user(request: SyncRequest, db: Session = Depends(get_db)):
         user = db.query(User).filter(User.username == request.username).first()
         if user:
             # Link existing user to Supabase
+            logger.info(f"DEBUG: Linking existing legacy user {user.username} to supabase_id {request.supabase_id}")
             user.supabase_id = request.supabase_id
-        else:
             # Create new user record
+            logger.info(f"DEBUG: Creating new user record for {request.username}")
             user = User(
                 supabase_id=request.supabase_id,
                 username=request.username,
