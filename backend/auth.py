@@ -89,7 +89,10 @@ async def get_current_user(token: str = Depends(oauth2_scheme), db: Session = De
         user = db.query(User).filter(User.username == sub).first()
         
     if user is None:
+        print(f"DEBUG: get_current_user FAILED. User with sub/username '{sub}' not found in database.")
         raise credentials_exception
+        
+    # print(f"DEBUG: get_current_user SUCCESS for {user.username}")
     return user
 
 from fastapi import Request
