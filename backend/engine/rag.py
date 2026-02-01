@@ -223,7 +223,9 @@ class RAGEngine:
         try:
             response = await self.chat_llm.ainvoke(prompt)
             content = self._normalize_content(response.content).strip().upper()
-            return "REPORT" if "REPORT" in content else "CHAT"
+            # Be more flexible: if it looks like a report request, it's a report
+            is_report = "REPORT" in content or "REPORT" in user_query.upper() or len(user_query) > 20
+            return "REPORT" if is_report else "CHAT"
         except Exception as e:
             print(f"Error in detect_intent: {e}")
             return "REPORT"

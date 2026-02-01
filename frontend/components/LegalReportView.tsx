@@ -127,7 +127,7 @@ export default function LegalReportView({ reportId, query, answer, sources, engi
             <div className="flex-1 flex w-full max-w-[1600px] mx-auto relative group">
 
                 {/* Left Side: Report View */}
-                <div className="flex-1 p-6 md:p-12 lg:p-20 overflow-y-auto max-h-screen scrollbar-hide w-full">
+                <div className="flex-1 p-6 md:p-12 lg:p-20 overflow-y-auto max-h-screen print:max-h-none print:overflow-visible scrollbar-hide w-full">
                     <div className="max-w-3xl mx-auto space-y-16">
 
                         <div className="flex flex-col md:flex-row justify-end items-stretch md:items-center gap-3 print:hidden mb-12 border-b border-slate-100 pb-4">
@@ -308,8 +308,11 @@ export default function LegalReportView({ reportId, query, answer, sources, engi
                         </section>
 
                         {/* Integrated Follow-up Chat */}
-                        {!isNaN(parseInt(reportId)) && (
-                            <ReportChatSection reportId={parseInt(reportId)} initialHistory={chat_history} />
+                        {(!isNaN(parseInt(reportId)) || (user && reportId?.startsWith("JL-"))) && (
+                            <ReportChatSection
+                                reportId={!isNaN(parseInt(reportId)) ? parseInt(reportId) : 0}
+                                initialHistory={chat_history}
+                            />
                         )}
 
                         <div className="flex flex-col items-center gap-6 pt-20 border-t border-slate-100 opacity-40 select-none pb-12">

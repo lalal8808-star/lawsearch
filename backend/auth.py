@@ -59,10 +59,10 @@ async def get_current_user(token: str = Depends(oauth2_scheme), db: Session = De
             try:
                 payload = jwt.decode(token, SUPABASE_JWT_SECRET, algorithms=ALGORITHMS)
             except Exception as e:
-                print(f"Supabase JWT decode fallback failed: {e}")
+                print(f"DEBUG: Supabase JWT decode fallback failed: {e}")
                 payload = None
         except Exception as e:
-            print(f"Supabase JWT decode failed: {e}")
+            print(f"DEBUG: Supabase JWT decode failed: {e}")
             payload = None
 
     # 2. Try Legacy Secret if Supabase failed or wasn't configured
@@ -70,7 +70,7 @@ async def get_current_user(token: str = Depends(oauth2_scheme), db: Session = De
         try:
             payload = jwt.decode(token, SECRET_KEY, algorithms=ALGORITHMS)
         except Exception as e:
-            print(f"Legacy JWT decode failed: {e}")
+            print(f"DEBUG: Legacy JWT decode failed: {e}")
             raise credentials_exception
     
     # Extract identity
@@ -108,7 +108,9 @@ async def get_current_user_optional(request: Request, db: Session = Depends(get_
         except Exception:
             try:
                 payload = jwt.decode(token, SUPABASE_JWT_SECRET, algorithms=ALGORITHMS)
-            except Exception:
+            except Exception as e:
+                # Log why it failed
+                # print(f"DEBUG: Optional Supabase JWT decode failed: {e}")
                 payload = None
                 
     # 2. Try Legacy Secret
@@ -123,4 +125,10 @@ async def get_current_user_optional(request: Request, db: Session = Depends(get_
         return None
         
     user = db.query(User).filter((User.supabase_id == sub) | (User.username == sub)).first()
+    if user:
+        # print(f"DEBUG: Detected user {user.username} (ID: {user.id})")
+        pass
+    else:
+        # print(f"DEBUG: User identity '{sub}' not found in database")
+        pass
     return user

@@ -205,6 +205,7 @@ async def query_ai(
     db: Session = Depends(get_db), 
     current_user: Optional[User] = Depends(auth.get_current_user_optional) # Custom optional helper
 ):
+    logger.info(f"DEBUG: /query received. user={'Anonymous' if not current_user else current_user.username}")
     try:
         # 1. Autonomous Syncing Logic
         required_laws = await rag_engine.detect_required_laws(query)
@@ -263,7 +264,11 @@ async def query_ai(
         result = await rag_engine.query(query, target_laws=required_laws)
         
         # 3. Save to history if logged in AND intent is REPORT
-        if current_user and result.get("intent") == "REPORT":
+        intent = result.get("intent", "").upper()
+        logger.info(f"DEBUG: Query result intent={intent}, user_logged_in={current_user is not None}")
+        
+        if current_user and intent == "REPORT":
+            logger.info(f"DEBUG: Saving report to history for user_id={current_user.id}")
             new_report = Report(
                 user_id=current_user.id,
                 query=query,
@@ -275,6 +280,11 @@ async def query_ai(
             db.commit()
             db.refresh(new_report)
             result["report_id"] = new_report.id
+            logger.info(f"DEBUG: Report saved successfully with id={new_report.id}")
+        elif intent == "REPORT" and not current_user:
+            logger.info("DEBUG: Intent is REPORT but user not logged in. skipping save.")
+        elif current_user and intent != "REPORT":
+            logger.info(f"DEBUG: User logged in but intent {intent} is not REPORT. skipping save.")
 
         return result
     except Exception as e:
