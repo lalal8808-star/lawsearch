@@ -308,11 +308,14 @@ export default function LegalReportView({ reportId, query, answer, sources, engi
                         </section>
 
                         {/* Integrated Follow-up Chat */}
-                        {(!isNaN(parseInt(reportId)) || (user && reportId?.startsWith("JL-"))) && (
-                            <ReportChatSection
-                                reportId={!isNaN(parseInt(reportId)) ? parseInt(reportId) : 0}
-                                initialHistory={chat_history}
-                            />
+                        {/* Chatbot Section - Show if we have a valid reportId (number or JL- prefix) */}
+                        {(reportId && (reportId.startsWith("JL-") || !isNaN(parseInt(reportId)))) && (
+                            <div className="mt-12 pt-12 border-t border-black/10 print:hidden">
+                                <ReportChatSection
+                                    reportId={!isNaN(parseInt(reportId)) ? parseInt(reportId) : 0}
+                                    initialHistory={chat_history}
+                                />
+                            </div>
                         )}
 
                         <div className="flex flex-col items-center gap-6 pt-20 border-t border-slate-100 opacity-40 select-none pb-12">

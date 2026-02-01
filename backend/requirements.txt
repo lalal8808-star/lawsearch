@@ -16,4 +16,5 @@ bcrypt
 psycopg2-binary
 SQLAlchemy
 supabase
+cryptography
 

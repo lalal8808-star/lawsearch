@@ -47,14 +47,18 @@ async def get_current_user(token: str = Depends(oauth2_scheme), db: Session = De
         headers={"WWW-Authenticate": "Bearer"},
     )
     
-    payload = None
-    # Diagnostic: check header
+    # --- Diagnostic Logging ---
     try:
         header = jwt.get_unverified_header(token)
-        print(f"DEBUG: Token header={header}")
-    except Exception as he:
-        print(f"DEBUG: Could not read token header: {he}")
+        print(f"DEBUG: Token alg={header.get('alg')}, header={header}")
+        # Unverified decode to see payload
+        unp = jwt.decode(token, options={"verify_signature": False})
+        # print(f"DEBUG: Unverified payload sub={unp.get('sub')}")
+    except Exception as e:
+        print(f"DEBUG: JWT Pre-check failed: {e}")
+    # --------------------------
 
+    payload = None
     # 1. Try Supabase JWT Secret
     if SUPABASE_JWT_SECRET:
         try:
@@ -111,6 +115,14 @@ async def get_current_user_optional(request: Request, db: Session = Depends(get_
     token = auth_header.split(" ")[1]
     # print(f"DEBUG: get_current_user_optional token prefix={token[:10]}...")
     
+    # --- Diagnostic Logging ---
+    try:
+        header = jwt.get_unverified_header(token)
+        # print(f"DEBUG: Optional Token alg={header.get('alg')}")
+    except Exception:
+        pass
+    # --------------------------
+
     payload = None
     # 1. Try Supabase JWT
     if SUPABASE_JWT_SECRET:

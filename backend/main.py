@@ -1,5 +1,6 @@
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Depends
 import os
+import logging
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
 from typing import List, Optional
