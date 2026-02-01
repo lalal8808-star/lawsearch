@@ -99,6 +99,7 @@ async def get_current_user_optional(request: Request, db: Session = Depends(get_
     if not auth_header or not auth_header.startswith("Bearer "):
         return None
     token = auth_header.split(" ")[1]
+    # print(f"DEBUG: get_current_user_optional token prefix={token[:10]}...")
     
     payload = None
     # 1. Try Supabase JWT
@@ -117,7 +118,8 @@ async def get_current_user_optional(request: Request, db: Session = Depends(get_
     if payload is None:
         try:
             payload = jwt.decode(token, SECRET_KEY, algorithms=ALGORITHMS)
-        except Exception:
+        except Exception as e:
+            # print(f"DEBUG: Optional Legacy JWT decode failed: {e}")
             return None
             
     sub: str = payload.get("sub")

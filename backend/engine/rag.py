@@ -52,7 +52,7 @@ class RAGEngine:
             google_api_key=GOOGLE_API_KEY
         )
         self.report_llm = ChatGoogleGenerativeAI(
-            model="gemini-2.0-flash-lite", # Changed from gemini-3-pro-preview to flash-lite for cost/speed, upgrade if needed
+            model="gemini-3-pro-preview",
             temperature=0,
             google_api_key=GOOGLE_API_KEY
         )
@@ -223,6 +223,7 @@ class RAGEngine:
         try:
             response = await self.chat_llm.ainvoke(prompt)
             content = self._normalize_content(response.content).strip().upper()
+            logger.info(f"DEBUG: detect_intent LLM output='{content}' for query='{user_query[:50]}...'")
             # Be more flexible: if it looks like a report request, it's a report
             is_report = "REPORT" in content or "REPORT" in user_query.upper() or len(user_query) > 20
             return "REPORT" if is_report else "CHAT"

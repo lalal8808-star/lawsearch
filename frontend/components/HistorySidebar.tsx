@@ -37,6 +37,11 @@ export default function HistorySidebar() {
         } else {
             setReports([]);
         }
+
+        // Listen for new reports
+        const handleRefresh = () => fetchHistory();
+        window.addEventListener('report-generated', handleRefresh);
+        return () => window.removeEventListener('report-generated', handleRefresh);
     }, [user, token, mounted]);
 
     const deleteReport = async (id: number, e: React.MouseEvent) => {

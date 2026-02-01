@@ -145,6 +145,8 @@ export default function AIPanel() {
                 // Auto open report only if intent is REPORT
                 if (res.data.intent === "REPORT") {
                     openReportWindow(currentQuery, res.data.answer, res.data.sources, res.data.engine, res.data.chat_history, res.data.report_id);
+                    // Trigger history refresh
+                    window.dispatchEvent(new CustomEvent('report-generated'));
                 }
             }
 

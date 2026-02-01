@@ -276,11 +276,15 @@ async def query_ai(
                 engine=result.get("engine"),
                 sources=result["sources"]
             )
-            db.add(new_report)
-            db.commit()
-            db.refresh(new_report)
-            result["report_id"] = new_report.id
-            logger.info(f"DEBUG: Report saved successfully with id={new_report.id}")
+            try:
+                db.add(new_report)
+                db.commit()
+                db.refresh(new_report)
+                result["report_id"] = new_report.id
+                logger.info(f"DEBUG: Report saved successfully with id={new_report.id}")
+            except Exception as save_err:
+                logger.error(f"DEBUG: Database SAVE ERROR: {save_err}")
+                db.rollback()
         elif intent == "REPORT" and not current_user:
             logger.info("DEBUG: Intent is REPORT but user not logged in. skipping save.")
         elif current_user and intent != "REPORT":
