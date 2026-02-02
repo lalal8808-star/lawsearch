@@ -123,6 +123,7 @@ async def sync_user(request: SyncRequest, db: Session = Depends(get_db)):
             # Link existing user to Supabase
             logger.info(f"DEBUG: Linking existing legacy user {user.username} to supabase_id {request.supabase_id}")
             user.supabase_id = request.supabase_id
+        else:
             # Create new user record
             logger.info(f"DEBUG: Creating new user record for {request.username}")
             user = User(
