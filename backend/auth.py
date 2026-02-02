@@ -12,7 +12,7 @@ from database import User, get_db
 SECRET_KEY = os.getenv("SECRET_KEY", "jonglaw_secret_key_2026_xyz")
 # Supabase JWT Secret (New)
 SUPABASE_JWT_SECRET = os.getenv("SUPABASE_JWT_SECRET")
-ALGORITHMS = ["HS256", "HS384", "HS512", "RS256"]
+ALGORITHMS = ["HS256", "HS384", "HS512", "RS256", "ES256"]
 ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24 * 7 # 1 week
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="auth/login")
