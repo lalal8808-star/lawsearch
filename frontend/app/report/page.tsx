@@ -3,10 +3,14 @@
 import { useEffect, useState } from "react";
 import LegalReportView from "@/components/LegalReportView";
 import { Loader2, AlertCircle } from "lucide-react";
+import LegalWatchModal from "@/components/LegalWatchModal";
+import { AuthProvider } from "@/context/AuthContext";
 
 export default function ReportPage() {
     const [reportData, setReportData] = useState<any>(null);
     const [error, setError] = useState<string | null>(null);
+
+    const [isWatchModalOpen, setIsWatchModalOpen] = useState(false);
 
     useEffect(() => {
         // Read data from sessionStorage
@@ -20,6 +24,10 @@ export default function ReportPage() {
         } else {
             setError("리포트 정보를 찾을 수 없습니다.");
         }
+
+        const handleOpenWatch = () => setIsWatchModalOpen(true);
+        window.addEventListener('open-legal-watch', handleOpenWatch);
+        return () => window.removeEventListener('open-legal-watch', handleOpenWatch);
     }, []);
 
     if (error) {
@@ -46,15 +54,23 @@ export default function ReportPage() {
     }
 
     return (
-        <div className="bg-slate-100 min-h-screen">
-            <LegalReportView
-                reportId={reportData.reportId}
-                query={reportData.query}
-                answer={reportData.answer}
-                sources={reportData.sources}
-                engine={reportData.engine}
-                chat_history={reportData.chat_history || []}
-            />
-        </div>
+        <AuthProvider>
+            <div className="bg-slate-100 min-h-screen">
+                <LegalReportView
+                    reportId={reportData.reportId}
+                    query={reportData.query}
+                    answer={reportData.answer}
+                    sources={reportData.sources}
+                    engine={reportData.engine}
+                    chat_history={reportData.chat_history || []}
+                />
+
+                <LegalWatchModal
+                    isOpen={isWatchModalOpen}
+                    onClose={() => setIsWatchModalOpen(false)}
+                    initialTab="subscriptions"
+                />
+            </div>
+        </AuthProvider>
     );
 }

@@ -307,15 +307,22 @@ class RAGEngine:
             seen_contents = set()
             sources_list = []
             
+            # Pre-populate sources with target laws to ensure they appear even if no docs matched
+            if target_laws:
+                for tlaw in target_laws:
+                    if tlaw and tlaw.lower() != 'none':
+                        sources_list.append({"source": tlaw, "type": "law"})
+
             for doc in docs:
                 content = doc.page_content.strip()
                 src = doc.metadata.get("source", "Unknown").strip()
+                src_type = doc.metadata.get("type", "unknown")
                 
                 if content not in seen_contents:
                     context_parts.append(f"[{src}] {content}")
                     seen_contents.add(content)
                     if src not in [s['source'] for s in sources_list]:
-                        sources_list.append({"source": src})
+                        sources_list.append({"source": src, "type": src_type})
 
             context = "\n\n".join(context_parts[:10])
             

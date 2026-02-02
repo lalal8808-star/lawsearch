@@ -132,6 +132,15 @@ export default function LegalReportView({ reportId, query, answer, sources, engi
 
                         <div className="flex flex-col md:flex-row justify-end items-stretch md:items-center gap-3 print:hidden mb-12 border-b border-slate-100 pb-4">
                             <button
+                                onClick={() => {
+                                    const event = new CustomEvent('open-legal-watch');
+                                    window.dispatchEvent(event);
+                                }}
+                                className="flex items-center justify-center gap-2 px-6 py-3 md:py-2 bg-blue-600 text-white hover:bg-blue-700 rounded-xl transition-all text-sm font-bold shadow-lg shadow-blue-600/20"
+                            >
+                                <BookmarkCheck size={16} /> 법령 구독 관리 (Legal Watch)
+                            </button>
+                            <button
                                 onClick={() => window.print()}
                                 className="flex items-center justify-center gap-2 px-6 py-3 md:py-2 bg-slate-900 text-white hover:bg-slate-800 rounded-xl transition-all text-sm font-bold shadow-lg shadow-slate-900/20"
                             >
@@ -258,15 +267,31 @@ export default function LegalReportView({ reportId, query, answer, sources, engi
                                 {/* Sources & Subscription Section */}
                                 {sources && sources.length > 0 && (
                                     <section className="space-y-6">
-                                        <div className="inline-flex items-center gap-2 px-3 py-1 bg-slate-100 rounded-lg text-slate-500 font-bold text-[11px] tracking-wider uppercase">
-                                            <BookOpen size={14} className="text-slate-400" />
-                                            Relevant Laws & Sources
+                                        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+                                            <div className="inline-flex items-center gap-2 px-3 py-1 bg-slate-100 rounded-lg text-slate-500 font-bold text-[11px] tracking-wider uppercase">
+                                                <BookOpen size={14} className="text-slate-400" />
+                                                Relevant Laws & Sources
+                                            </div>
+                                            <div className="flex items-center gap-2 text-[10px] text-blue-500 font-bold bg-blue-50 px-3 py-1 rounded-full animate-pulse">
+                                                <Info size={12} /> 'Watch'를 눌러 개정 정보를 알림받으세요.
+                                            </div>
                                         </div>
                                         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                                             {sources.map((src, idx) => {
-                                                const isLaw = src.source && (src.source.endsWith("법") || src.source.endsWith("령") || src.source.endsWith("규칙") || src.source.endsWith("률"));
-                                                const isSubscribed = subscribedLaws.includes(src.source);
-                                                const isSubmitting = submittingLaw === src.source;
+                                                const sourceName = src.source || "";
+                                                const isLaw = src.type === "law" || (sourceName && (
+                                                    sourceName.endsWith("법") ||
+                                                    sourceName.endsWith("령") ||
+                                                    sourceName.endsWith("규칙") ||
+                                                    sourceName.endsWith("률") ||
+                                                    sourceName.includes("법 [") || // Matches "민법 [제750조]"
+                                                    sourceName.includes("령 [")
+                                                ));
+
+                                                // Clean law name for subscription (remove article parts)
+                                                const cleanLawName = sourceName.split(" [")[0].trim();
+                                                const isSubscribed = subscribedLaws.includes(cleanLawName);
+                                                const isSubmitting = submittingLaw === cleanLawName;
 
                                                 return (
                                                     <div key={idx} className="p-4 bg-white border border-slate-100 rounded-2xl flex items-center justify-between group hover:border-blue-200 transition-all shadow-sm">
@@ -281,7 +306,7 @@ export default function LegalReportView({ reportId, query, answer, sources, engi
                                                         </div>
                                                         {isLaw && user && (
                                                             <button
-                                                                onClick={() => toggleSubscription(src.source)}
+                                                                onClick={() => toggleSubscription(cleanLawName)}
                                                                 disabled={isSubmitting}
                                                                 className={`p-2 rounded-xl transition-all flex items-center gap-2 text-[10px] font-black uppercase tracking-widest ${isSubscribed
                                                                     ? "bg-blue-50 text-blue-600 border border-blue-100"
