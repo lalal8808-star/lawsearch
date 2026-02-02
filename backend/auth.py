@@ -2,6 +2,7 @@ import os
 from datetime import datetime, timedelta
 from typing import Optional
 import jwt
+from jwt import PyJWKClient
 import bcrypt
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
@@ -10,12 +11,18 @@ from database import User, get_db
 
 # Secret key to sign JWT (Legacy)
 SECRET_KEY = os.getenv("SECRET_KEY", "jonglaw_secret_key_2026_xyz")
-# Supabase JWT Secret (New)
+# Supabase Configuration
+SUPABASE_URL = os.getenv("SUPABASE_URL", "https://cihzxfxtxpgdvebupeua.supabase.co")
 SUPABASE_JWT_SECRET = os.getenv("SUPABASE_JWT_SECRET")
+
 ALGORITHMS = ["HS256", "HS384", "HS512", "RS256", "ES256"]
 ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24 * 7 # 1 week
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="auth/login")
+
+# JWKS Client for ES256/RS256 Supabase tokens
+JWKS_URL = f"{SUPABASE_URL}/auth/v1/.well-known/jwks.json"
+jwks_client = PyJWKClient(JWKS_URL)
 
 def verify_password(plain_password: str, hashed_password: str):
     try:
@@ -51,24 +58,36 @@ async def get_current_user(token: str = Depends(oauth2_scheme), db: Session = De
     try:
         header = jwt.get_unverified_header(token)
         print(f"DEBUG: Token alg={header.get('alg')}, header={header}")
-        # Unverified decode to see payload
-        unp = jwt.decode(token, options={"verify_signature": False})
-        print(f"DEBUG: Token payload (unverified): {unp}")
     except Exception as e:
         print(f"DEBUG: JWT Pre-check failed: {e}")
     # --------------------------
 
     payload = None
-    # 1. Try Supabase JWT Secret
-    if SUPABASE_JWT_SECRET:
+    header = jwt.get_unverified_header(token)
+    alg = header.get("alg")
+
+    # 1. Try Supabase JWT
+    if SUPABASE_JWT_SECRET or alg == "ES256":
         try:
-            # Supabase tokens often have 'aud': 'authenticated'
-            # We try with audience first
-            payload = jwt.decode(token, SUPABASE_JWT_SECRET, algorithms=ALGORITHMS, audience="authenticated")
+            if alg == "ES256":
+                # Use JWKS for asymmetric ES256
+                signing_key = jwks_client.get_signing_key_from_jwt(token)
+                payload = jwt.decode(
+                    token, 
+                    signing_key.key, 
+                    algorithms=["ES256"], 
+                    audience="authenticated"
+                )
+            else:
+                # Use Symmetric Secret for HS256
+                payload = jwt.decode(token, SUPABASE_JWT_SECRET, algorithms=ALGORITHMS, audience="authenticated")
         except jwt.InvalidAudienceError:
-            # Fallback: decode without audience check if it's the only issue
             try:
-                payload = jwt.decode(token, SUPABASE_JWT_SECRET, algorithms=ALGORITHMS)
+                if alg == "ES256":
+                    signing_key = jwks_client.get_signing_key_from_jwt(token)
+                    payload = jwt.decode(token, signing_key.key, algorithms=["ES256"])
+                else:
+                    payload = jwt.decode(token, SUPABASE_JWT_SECRET, algorithms=ALGORITHMS)
             except Exception as e:
                 print(f"DEBUG: Supabase JWT decode fallback failed: {e}")
                 payload = None
@@ -84,19 +103,12 @@ async def get_current_user(token: str = Depends(oauth2_scheme), db: Session = De
             print(f"DEBUG: Legacy JWT decode failed: {e}")
             raise credentials_exception
     
-    # Extract identity
-    # Supabase uses 'sub' for UUID
-    # Legacy uses 'sub' for username
     sub: str = payload.get("sub")
     print(f"DEBUG: Token sub value is '{sub}'") 
     if sub is None:
         raise credentials_exception
         
-    # Look up user
-    # Try by supabase_id first
     user = db.query(User).filter(User.supabase_id == sub).first()
-    
-    # If not found, try by username (for legacy users)
     if user is None:
         user = db.query(User).filter(User.username == sub).first()
         
@@ -104,7 +116,6 @@ async def get_current_user(token: str = Depends(oauth2_scheme), db: Session = De
         print(f"DEBUG: get_current_user FAILED. User with sub/username '{sub}' not found in database.")
         raise credentials_exception
         
-    # print(f"DEBUG: get_current_user SUCCESS for {user.username}")
     return user
 
 from fastapi import Request
@@ -114,46 +125,41 @@ async def get_current_user_optional(request: Request, db: Session = Depends(get_
     if not auth_header or not auth_header.startswith("Bearer "):
         return None
     token = auth_header.split(" ")[1]
-    # print(f"DEBUG: get_current_user_optional token prefix={token[:10]}...")
     
-    # --- Diagnostic Logging ---
     try:
         header = jwt.get_unverified_header(token)
-        # print(f"DEBUG: Optional Token alg={header.get('alg')}")
-    except Exception:
-        pass
-    # --------------------------
-
-    payload = None
-    # 1. Try Supabase JWT
-    if SUPABASE_JWT_SECRET:
-        try:
-            payload = jwt.decode(token, SUPABASE_JWT_SECRET, algorithms=ALGORITHMS, audience="authenticated")
-        except Exception:
+        alg = header.get("alg")
+        
+        payload = None
+        # 1. Try Supabase
+        if SUPABASE_JWT_SECRET or alg == "ES256":
             try:
-                payload = jwt.decode(token, SUPABASE_JWT_SECRET, algorithms=ALGORITHMS)
-            except Exception as e:
-                # Log why it failed
-                # print(f"DEBUG: Optional Supabase JWT decode failed: {e}")
-                payload = None
+                if alg == "ES256":
+                    signing_key = jwks_client.get_signing_key_from_jwt(token)
+                    payload = jwt.decode(token, signing_key.key, algorithms=["ES256"], audience="authenticated")
+                else:
+                    payload = jwt.decode(token, SUPABASE_JWT_SECRET, algorithms=ALGORITHMS, audience="authenticated")
+            except Exception:
+                try:
+                    if alg == "ES256":
+                        signing_key = jwks_client.get_signing_key_from_jwt(token)
+                        payload = jwt.decode(token, signing_key.key, algorithms=["ES256"])
+                    else:
+                        payload = jwt.decode(token, SUPABASE_JWT_SECRET, algorithms=ALGORITHMS)
+                except Exception:
+                    payload = None
+                    
+        # 2. Try Legacy
+        if payload is None:
+            try:
+                payload = jwt.decode(token, SECRET_KEY, algorithms=ALGORITHMS)
+            except Exception:
+                return None
                 
-    # 2. Try Legacy Secret
-    if payload is None:
-        try:
-            payload = jwt.decode(token, SECRET_KEY, algorithms=ALGORITHMS)
-        except Exception as e:
-            # print(f"DEBUG: Optional Legacy JWT decode failed: {e}")
+        sub: str = payload.get("sub")
+        if sub is None:
             return None
             
-    sub: str = payload.get("sub")
-    if sub is None:
+        return db.query(User).filter((User.supabase_id == sub) | (User.username == sub)).first()
+    except Exception:
         return None
-        
-    user = db.query(User).filter((User.supabase_id == sub) | (User.username == sub)).first()
-    if user:
-        # print(f"DEBUG: Detected user {user.username} (ID: {user.id})")
-        pass
-    else:
-        # print(f"DEBUG: User identity '{sub}' not found in database")
-        pass
-    return user
