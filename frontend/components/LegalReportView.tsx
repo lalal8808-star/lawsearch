@@ -1,6 +1,6 @@
 "use client";
 
-import { Scale, HelpCircle, ShieldCheck, Zap, Printer, Download, BookOpen, Loader2, X, Info, MessageCircle, MessageSquare, Bookmark, BookmarkPlus, BookmarkCheck } from "lucide-react";
+import { Scale, HelpCircle, ShieldCheck, Zap, Printer, Download, BookOpen, Loader2, X, Info, MessageCircle, MessageSquare, Bookmark, BookmarkPlus, BookmarkCheck, AlertCircle } from "lucide-react";
 import { useState, useEffect } from "react";
 import axios from "axios";
 import api from "@/utils/api";
@@ -8,13 +8,23 @@ import { useAuth } from "@/context/AuthContext";
 import { motion, AnimatePresence } from "framer-motion";
 import ReportChatSection from "./ReportChatSection";
 
+interface Source {
+    source: string;
+    type?: string;
+}
+
+interface ChatMessage {
+    role: "user" | "assistant";
+    content: string;
+}
+
 interface LegalReportViewProps {
     reportId: string;
     query: string;
     answer: string;
-    sources: any[];
+    sources: Source[];
     engine?: string;
-    chat_history?: any[];
+    chat_history?: ChatMessage[];
 }
 
 export default function LegalReportView({ reportId, query, answer, sources, engine, chat_history = [] }: LegalReportViewProps) {
@@ -23,6 +33,8 @@ export default function LegalReportView({ reportId, query, answer, sources, engi
     const [subscribedLaws, setSubscribedLaws] = useState<string[]>([]);
     const [submittingLaw, setSubmittingLaw] = useState<string | null>(null);
 
+    const [error, setError] = useState<string | null>(null);
+
     useEffect(() => {
         setMounted(true);
         if (user) {
@@ -30,24 +42,21 @@ export default function LegalReportView({ reportId, query, answer, sources, engi
         }
     }, [user]);
 
-    const fetchData = async () => {
-        if (user) {
-            fetchSubscriptions();
-        }
-    };
-
     const fetchSubscriptions = async () => {
         try {
+            setError(null);
             const res = await api.get("/subscriptions");
-            setSubscribedLaws(res.data.map((s: any) => s.law_name));
+            setSubscribedLaws(res.data.map((s: { law_name: string }) => s.law_name));
         } catch (error) {
             console.error("Failed to fetch subscriptions:", error);
+            setError("구독 정보를 불러오는데 실패했습니다.");
         }
     };
 
     const toggleSubscription = async (lawName: string) => {
         if (!user) return;
         setSubmittingLaw(lawName);
+        setError(null);
         try {
             if (subscribedLaws.includes(lawName)) {
                 await api.delete(`/subscriptions?law_name=${encodeURIComponent(lawName)}`);
@@ -60,6 +69,7 @@ export default function LegalReportView({ reportId, query, answer, sources, engi
             }
         } catch (error) {
             console.error("Failed to toggle subscription:", error);
+            setError("알림 설정 중 오류가 발생했습니다. 다시 시도해 주세요.");
         } finally {
             setSubmittingLaw(null);
         }
@@ -130,21 +140,38 @@ export default function LegalReportView({ reportId, query, answer, sources, engi
                 <div className="flex-1 p-6 md:p-12 lg:p-20 overflow-y-auto max-h-screen print:max-h-none print:overflow-visible scrollbar-hide w-full">
                     <div className="max-w-3xl mx-auto space-y-16">
 
+                        {error && (
+                            <motion.div
+                                initial={{ opacity: 0, y: -10 }}
+                                animate={{ opacity: 1, y: 0 }}
+                                className="flex items-center gap-3 p-4 bg-red-50 text-red-600 rounded-2xl border border-red-100 text-sm font-bold mb-8 print:hidden"
+                                role="alert"
+                            >
+                                <AlertCircle size={18} />
+                                {error}
+                                <button onClick={() => setError(null)} className="ml-auto hover:bg-red-100 p-1 rounded-full transition-colors">
+                                    <X size={16} />
+                                </button>
+                            </motion.div>
+                        )}
+
                         <div className="flex flex-col md:flex-row justify-end items-stretch md:items-center gap-3 print:hidden mb-12 border-b border-slate-100 pb-4">
                             <button
+                                aria-label="법령 구독 관리 열기"
                                 onClick={() => {
                                     const event = new CustomEvent('open-legal-watch');
                                     window.dispatchEvent(event);
                                 }}
                                 className="flex items-center justify-center gap-2 px-6 py-3 md:py-2 bg-blue-600 text-white hover:bg-blue-700 rounded-xl transition-all text-sm font-bold shadow-lg shadow-blue-600/20"
                             >
-                                <BookmarkCheck size={16} /> 법령 구독 관리 (Legal Watch)
+                                <BookmarkCheck size={16} aria-hidden="true" /> 법령 구독 관리 (Legal Watch)
                             </button>
                             <button
+                                aria-label="리포트 인쇄 또는 PDF 저장"
                                 onClick={() => window.print()}
                                 className="flex items-center justify-center gap-2 px-6 py-3 md:py-2 bg-slate-900 text-white hover:bg-slate-800 rounded-xl transition-all text-sm font-bold shadow-lg shadow-slate-900/20"
                             >
-                                <Printer size={16} /> 리포트 인쇄 / PDF 저장
+                                <Printer size={16} aria-hidden="true" /> 리포트 인쇄 / PDF 저장
                             </button>
                         </div>
 
@@ -306,6 +333,7 @@ export default function LegalReportView({ reportId, query, answer, sources, engi
                                                         </div>
                                                         {isLaw && user && (
                                                             <button
+                                                                aria-label={`${cleanLawName} 법령 구독 ${isSubscribed ? "취소" : "설정"}`}
                                                                 onClick={() => toggleSubscription(cleanLawName)}
                                                                 disabled={isSubmitting}
                                                                 className={`p-2 rounded-xl transition-all flex items-center gap-2 text-[10px] font-black uppercase tracking-widest ${isSubscribed
@@ -314,11 +342,11 @@ export default function LegalReportView({ reportId, query, answer, sources, engi
                                                                     }`}
                                                             >
                                                                 {isSubmitting ? (
-                                                                    <Loader2 size={14} className="animate-spin" />
+                                                                    <Loader2 size={14} className="animate-spin" aria-hidden="true" />
                                                                 ) : isSubscribed ? (
-                                                                    <BookmarkCheck size={14} />
+                                                                    <BookmarkCheck size={14} aria-hidden="true" />
                                                                 ) : (
-                                                                    <BookmarkPlus size={14} />
+                                                                    <BookmarkPlus size={14} aria-hidden="true" />
                                                                 )}
                                                                 {isSubscribed ? "Subscribed" : "Watch"}
                                                             </button>
