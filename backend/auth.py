@@ -53,7 +53,7 @@ async def get_current_user(token: str = Depends(oauth2_scheme), db: Session = De
         print(f"DEBUG: Token alg={header.get('alg')}, header={header}")
         # Unverified decode to see payload
         unp = jwt.decode(token, options={"verify_signature": False})
-        # print(f"DEBUG: Unverified payload sub={unp.get('sub')}")
+        print(f"DEBUG: Token payload (unverified): {unp}")
     except Exception as e:
         print(f"DEBUG: JWT Pre-check failed: {e}")
     # --------------------------
