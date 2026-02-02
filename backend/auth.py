@@ -88,6 +88,7 @@ async def get_current_user(token: str = Depends(oauth2_scheme), db: Session = De
     # Supabase uses 'sub' for UUID
     # Legacy uses 'sub' for username
     sub: str = payload.get("sub")
+    print(f"DEBUG: Token sub value is '{sub}'") 
     if sub is None:
         raise credentials_exception
         

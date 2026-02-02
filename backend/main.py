@@ -113,18 +113,21 @@ async def update_profile(
 @app.post("/auth/sync")
 async def sync_user(request: SyncRequest, db: Session = Depends(get_db)):
     logger.info(f"DEBUG: /auth/sync received for supabase_id={request.supabase_id}, email={request.username}")
-    # Check if user already exists in our DB by supabase_id
+    
+    # 1. 먼저 supabase_id로 검색
     user = db.query(User).filter(User.supabase_id == request.supabase_id).first()
     
     if not user:
-        # Check if a legacy user with the same email (username) exists
+        # 2. 없으면 이메일(username)로 기존 레거시 유저가 있는지 검색
         user = db.query(User).filter(User.username == request.username).first()
         if user:
-            # Link existing user to Supabase
+            # 기존 유저가 있으면 supabase_id만 연결 (업데이트)
             logger.info(f"DEBUG: Linking existing legacy user {user.username} to supabase_id {request.supabase_id}")
             user.supabase_id = request.supabase_id
+            if request.nickname:
+                user.nickname = request.nickname
         else:
-            # Create new user record
+            # 3. 둘 다 없으면 완전히 새로운 유저 생성
             logger.info(f"DEBUG: Creating new user record for {request.username}")
             user = User(
                 supabase_id=request.supabase_id,
@@ -133,12 +136,18 @@ async def sync_user(request: SyncRequest, db: Session = Depends(get_db)):
             )
             db.add(user)
     else:
-        # Just update nickname if provided and different
+        # 이미 연동된 유저라면 닉네임만 업데이트
         if request.nickname and user.nickname != request.nickname:
             user.nickname = request.nickname
             
-    db.commit()
-    db.refresh(user)
+    try:
+        db.commit()
+        db.refresh(user)
+    except Exception as e:
+        logger.error(f"DEBUG: Sync failed: {e}")
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Sync failed: {str(e)}")
+        
     return {"status": "synced", "nickname": user.nickname}
 
 # --- Law Endpoints ---
