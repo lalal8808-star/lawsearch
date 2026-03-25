@@ -41,7 +41,9 @@ SQLALCHEMY_DATABASE_URL = sanitize_db_url(raw_url)
 
 if not SQLALCHEMY_DATABASE_URL:
     # Fallback for development if SUPABASE_DB_URL is not provided
-    db_dir = os.getenv("DATABASE_DIR", ".")
+    # Use absolute path relative to this file to avoid CWD issues
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    db_dir = os.getenv("DATABASE_DIR", base_dir)
     if not os.path.exists(db_dir):
         os.makedirs(db_dir, exist_ok=True)
     SQLALCHEMY_DATABASE_URL = f"sqlite:///{os.path.join(db_dir, 'law_history.db')}"
@@ -77,6 +79,7 @@ class User(Base):
     reports = relationship("Report", back_populates="owner")
     subscriptions = relationship("Subscription", back_populates="owner")
     notifications = relationship("Notification", back_populates="user")
+    api_keys = relationship("APIKey", back_populates="owner")
 
 class Report(Base):
     __tablename__ = "reports"
@@ -117,6 +120,20 @@ class Notification(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
     user = relationship("User", back_populates="notifications")
+
+class APIKey(Base):
+    __tablename__ = "api_keys"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"))
+    key_prefix = Column(String(10), index=True) # First 8-10 chars for display
+    hashed_key = Column(String, unique=True, index=True) # Securely hashed
+    name = Column(String, nullable=True) # Optional label e.g., "Zapier Integration"
+    created_at = Column(DateTime, default=datetime.utcnow)
+    last_used_at = Column(DateTime, nullable=True)
+    is_active = Column(Integer, default=1) # 1=Active, 0=Revoked
+
+    owner = relationship("User", back_populates="api_keys")
 
 def init_db():
     Base.metadata.create_all(bind=engine)

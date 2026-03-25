@@ -6,6 +6,7 @@ from dotenv import load_dotenv
 from langchain_google_genai import GoogleGenerativeAIEmbeddings, ChatGoogleGenerativeAI
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_core.documents import Document
+from langchain_core.messages import SystemMessage, HumanMessage
 from typing import List, Dict, Any, Optional
 from supabase.client import create_client, Client
 
@@ -47,12 +48,12 @@ class RAGEngine:
             print("Supabase client NOT initialized due to missing credentials.")
 
         self.chat_llm = ChatGoogleGenerativeAI(
-            model="gemini-2.0-flash-lite", 
+            model="gemini-2.5-flash", 
             temperature=0.7,
             google_api_key=GOOGLE_API_KEY
         )
         self.report_llm = ChatGoogleGenerativeAI(
-            model="gemini-3-pro-preview",
+            model="gemini-3.1-pro-preview",
             temperature=0,
             google_api_key=GOOGLE_API_KEY
         )
@@ -124,7 +125,7 @@ class RAGEngine:
             self._refresh_metadata_cache()
         return list(self._metadata_cache['msts'])
 
-    async def add_documents(self, documents: List[Document]):
+    async def add_documents(self, documents: List[Document], user_id: Optional[int] = None):
         """
         Add documents to the vector store with chunking and direct Supabase insertion.
         """
@@ -144,6 +145,8 @@ class RAGEngine:
                 # Prepare data for direct Supabase insert
                 records = []
                 for doc in batch:
+                    if user_id is not None:
+                        doc.metadata["user_id"] = user_id
                     embedding = await self.embeddings.aembed_query(doc.page_content)
                     records.append({
                         "content": doc.page_content,
@@ -179,12 +182,11 @@ class RAGEngine:
         """
         Recommend relevant laws based on a case description (using ainvoke).
         """
-        prompt = f"""
-        당신은 대한민국 법률 전문가입니다. 아래 사례를 해결하기 위해 반드시 검토해야 할 대한민국 법령 10가지를 추천하십시오.
-        사례: {case_description}
-        형식: 법령 명칭만 쉼표(,)로 구분. 추가 설명 생략.
-        """
-        response = await self.report_llm.ainvoke(prompt)
+        messages = [
+            SystemMessage(content="당신은 대한민국 법률 전문가입니다. 아래 사례를 해결하기 위해 반드시 검토해야 할 대한민국 법령 10가지를 추천하십시오. 형식: 법령 명칭만 쉼표(,)로 구분. 추가 설명 생략."),
+            HumanMessage(content=f"사례: {case_description}")
+        ]
+        response = await self.report_llm.ainvoke(messages)
         content = self._normalize_content(response.content)
             
         import re
@@ -196,12 +198,11 @@ class RAGEngine:
         """
         Detect law names in the query that might need to be synced (using ainvoke).
         """
-        prompt = f"""
-        질문에 답변하기 위해 참조해야 하는 대한민국의 법령 명칭을 추출하십시오.
-        질문: {user_query}
-        형식: 법령 명칭만 쉼표(,)로 구분. 없으면 'None'.
-        """
-        response = await self.report_llm.ainvoke(prompt)
+        messages = [
+            SystemMessage(content="질문에 답변하기 위해 참조해야 하는 대한민국의 법령 명칭을 추출하십시오. 형식: 법령 명칭만 쉼표(,)로 구분. 없으면 'None'."),
+            HumanMessage(content=f"질문: {user_query}")
+        ]
+        response = await self.report_llm.ainvoke(messages)
         content = self._normalize_content(response.content)
             
         if "None" in content or not content.strip():
@@ -215,13 +216,12 @@ class RAGEngine:
         """
         Classify query as CHAT or REPORT (using ainvoke).
         """
-        prompt = f"""
-        질문을 분석하여 'CHAT' 또는 'REPORT'로 분류하십시오.
-        질문: {user_query}
-        답변: 오직 단어 하나만 반환.
-        """
+        messages = [
+            SystemMessage(content="질문을 분석하여 'CHAT' 또는 'REPORT'로 분류하십시오. 오직 단어 하나만 반환."),
+            HumanMessage(content=f"질문: {user_query}")
+        ]
         try:
-            response = await self.chat_llm.ainvoke(prompt)
+            response = await self.chat_llm.ainvoke(messages)
             content = self._normalize_content(response.content).strip().upper()
             logger.info(f"DEBUG: detect_intent LLM output='{content}' for query='{user_query[:50]}...'")
             # Be more flexible: if it looks like a report request, it's a report
@@ -231,7 +231,7 @@ class RAGEngine:
             print(f"Error in detect_intent: {e}")
             return "REPORT"
 
-    async def query(self, user_query: str, target_laws: List[str] = None) -> Dict[str, Any]:
+    async def query(self, user_query: str, target_laws: List[str] = None, current_user_id: Optional[int] = None) -> Dict[str, Any]:
         """
         Modernized legal query (Fully Anonymous, Async, and Re-ranked).
         """
@@ -283,11 +283,15 @@ class RAGEngine:
                 content = item.get("content", "")
                 
                 # Apply filters manually to ensure consistent behavior
+                is_upload_type = metadata.get("type") == "user_upload"
+                if is_upload_type:
+                    if current_user_id is None or str(metadata.get("user_id")) != str(current_user_id):
+                        continue
+
                 if target_sources:
                     is_target = metadata.get("source") in target_sources
-                    is_upload = metadata.get("type") == "user_upload"
                     is_precedent = metadata.get("type") == "precedent"
-                    if not (is_target or is_upload or is_precedent):
+                    if not (is_target or is_upload_type or is_precedent):
                         continue
                 
                 docs.append(Document(page_content=content, metadata=metadata))
@@ -333,13 +337,15 @@ class RAGEngine:
             """
 
             if intent == "CHAT":
-                final_prompt = f"{persona}\n\n질문: {user_query}\n\n참고 법령 및 판례:\n{context}\n\n위 가이드라인에 따라 친절하고 전문적으로 답변하십시오."
+                system_instruction = f"{persona}\n\n참고 법령 및 판례:\n{context}\n\n위 가이드라인에 따라 친절하고 전문적으로 답변하십시오."
+                messages = [SystemMessage(content=system_instruction), HumanMessage(content=f"질문: {user_query}")]
                 llm = self.chat_llm
             else:
-                final_prompt = f"{persona}\n\n질문: {user_query}\n\n참고 법령 및 자료(판례 포함):\n{context}\n\n전문 변호사로서 [사건 개요, 법률 분석, 판례 분석, 결론, 향후 조치] 순서로 체계적인 자문 리포트를 작성하십시오. 특히 제공된 '판례'를 분석하여 유사 사례에서의 판단 기준을 명확히 제시하십시오."
+                system_instruction = f"{persona}\n\n참고 법령 및 자료(판례 포함):\n{context}\n\n전문 변호사로서 [사건 개요, 법률 분석, 판례 분석, 결론, 향후 조치] 순서로 체계적인 자문 리포트를 작성하십시오. 특히 제공된 '판례'를 분석하여 유사 사례에서의 판단 기준을 명확히 제시하십시오."
+                messages = [SystemMessage(content=system_instruction), HumanMessage(content=f"질문: {user_query}")]
                 llm = self.report_llm
 
-            response = await llm.ainvoke(final_prompt)
+            response = await llm.ainvoke(messages)
             
             return {
                 "answer": self._normalize_content(response.content),
@@ -357,7 +363,7 @@ class RAGEngine:
         """
         history_text = "\n".join([f"{m['role'].upper()}: {m['content']}" for m in chat_history])
         
-        prompt = f"""
+        system_content = f"""
         당신은 앞서 작성된 법률 리포트에 대해 심층적인 답변을 제공하는 전문 법률 어시스턴트 'JongLaw AI'입니다.
         
         [리포트 원문 내용]
@@ -366,9 +372,6 @@ class RAGEngine:
         [이전 대화 내역]
         {history_text}
         
-        [현재 질문]
-        {user_query}
-        
         가이드라인:
         1. 리포트의 내용을 바탕으로 질문에 대해 구체적이고 전문적으로 답변하십시오.
         2. 리포트에 언급된 특정 용어(예: '부당이득', '불법행위' 등)나 법리가 있다면 그 맥락을 유지하며 설명하십시오.
@@ -376,8 +379,13 @@ class RAGEngine:
         4. 답변은 친절하고 정중한 전문 변호사의 어조를 유지하십시오.
         """
         
+        messages = [
+            SystemMessage(content=system_content),
+            HumanMessage(content=f"질문: {user_query}")
+        ]
+        
         try:
-            response = await self.chat_llm.ainvoke(prompt)
+            response = await self.chat_llm.ainvoke(messages)
             return {
                 "answer": self._normalize_content(response.content),
                 "model": self.chat_llm.model_name if hasattr(self.chat_llm, 'model_name') else self.chat_llm.model
@@ -429,7 +437,7 @@ class RAGEngine:
             print(f"Error retrieving article text: {e}")
             return None
 
-    def get_user_uploads(self) -> List[str]:
+    def get_user_uploads(self, user_id: int) -> List[str]:
         """
         Retrieve unique source names for user-uploaded documents.
         """
@@ -439,6 +447,7 @@ class RAGEngine:
             response = self.supabase_client.table("documents") \
                 .select("metadata") \
                 .filter("metadata->>type", "eq", "user_upload") \
+                .filter("metadata->>user_id", "eq", str(user_id)) \
                 .execute()
                 
             sources = set()
@@ -451,7 +460,7 @@ class RAGEngine:
             print(f"Error getting user uploads: {e}")
             return []
 
-    def delete_user_upload(self, source_name: str):
+    def delete_user_upload(self, source_name: str, user_id: int):
         """
         Delete all segments of a specific user-uploaded source.
         """
@@ -462,6 +471,7 @@ class RAGEngine:
                 .delete() \
                 .filter("metadata->>type", "eq", "user_upload") \
                 .filter("metadata->>source", "eq", source_name) \
+                .filter("metadata->>user_id", "eq", str(user_id)) \
                 .execute()
                 
             print(f"Deleted segments for uploaded source: {source_name} from Supabase")
@@ -472,9 +482,9 @@ class RAGEngine:
 
 class VisionEngine:
     def __init__(self):
-        # Using gemini-2.0-flash-lite which supports multimodal
+        # Using gemini-2.5-flash which supports multimodal
         self.vision_llm = ChatGoogleGenerativeAI(
-            model="gemini-2.0-flash-lite", 
+            model="gemini-2.5-flash", 
             temperature=0,
             google_api_key=GOOGLE_API_KEY
         )
@@ -486,11 +496,8 @@ class VisionEngine:
         """
         content_parts = []
         
-        # Base prompt
-        base_prompt = f"""
+        system_msg = SystemMessage(content=f"""
         당신은 대한민국 전문 변호사입니다. 제공된 계약서(또는 법률 문서)를 정밀 분석하여 다음 정보를 추출하고 분석하십시오.
-        
-        사용자 추가 설명: {user_description if user_description else "없음"}
 
         분석 요구사항:
         1. **문서 종류 식별**: 이 문서가 어떤 종류의 계약서인지 파악하십시오.
@@ -510,11 +517,13 @@ class VisionEngine:
         }}
 
         반드시 유효한 JSON 형식으로만 답변하십시오. 한국어로 작성하십시오.
-        """
-        content_parts.append({"type": "text", "text": base_prompt})
+        """)
 
+        human_text = f"사용자 추가 설명: {user_description if user_description else '없음'}"
         if text_content:
-            content_parts.append({"type": "text", "text": f"\n\n[계약서 텍스트 내용]\n{text_content}"})
+            human_text += f"\n\n[계약서 텍스트 내용]\n{text_content}"
+
+        content_parts = [{"type": "text", "text": human_text}]
 
         if image_bytes:
             # Convert image bytes to base64
@@ -524,13 +533,13 @@ class VisionEngine:
                 "image_url": {"url": f"data:image/jpeg;base64,{image_base64}"},
             })
 
-        message = {
-            "role": "user",
-            "content": content_parts,
-        }
+        messages = [
+            system_msg,
+            HumanMessage(content=content_parts)
+        ]
 
         try:
-            response = await self.vision_llm.ainvoke([message])
+            response = await self.vision_llm.ainvoke(messages)
             content = self._normalize_json_content(response.content)
             import json
             return json.loads(content)

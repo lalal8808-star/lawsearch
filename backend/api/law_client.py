@@ -6,7 +6,7 @@ from typing import List, Dict, Any, Optional
 
 load_dotenv()
 
-BASE_URL = "http://www.law.go.kr/DRF"
+BASE_URL = "https://www.law.go.kr/DRF"
 OC_ID = os.getenv("LAW_OC_ID", "test") # Default to test if not provided
 
 class LawClient:

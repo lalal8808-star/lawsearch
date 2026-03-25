@@ -1,4 +1,4 @@
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Depends
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Depends, Request
 import os
 import logging
 from fastapi.middleware.cors import CORSMiddleware
@@ -13,7 +13,7 @@ from engine.document_processor import document_processor
 from engine.legal_watch import legal_watch_engine
 import database
 import auth
-from database import User, Report, get_db, Subscription, Notification
+from database import User, Report, get_db, Subscription, Notification, APIKey
 import logging
 
 from pydantic import BaseModel
@@ -33,6 +33,16 @@ logger.info("JongLaw AI API Starting up... [Final RPC Fix Applied]")
 
 # Initialize DB on startup
 database.init_db()
+
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
+
+limiter = Limiter(key_func=get_remote_address)
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+MAX_FILE_SIZE = 10 * 1024 * 1024 # 10MB limit for file uploads
 
 # Configure CORS
 env_origins = os.getenv("ALLOWED_ORIGINS", "http://localhost:3000,http://127.0.0.1:3000,http://localhost:3001").split(",")
@@ -56,7 +66,9 @@ async def root():
 # --- Auth Endpoints ---
 
 @app.post("/auth/signup")
+@limiter.limit("5/minute")
 async def signup(
+    request: Request,
     username: str = Form(...), 
     password: str = Form(...), 
     nickname: str = Form(...), 
@@ -76,7 +88,8 @@ async def signup(
     return {"access_token": access_token, "token_type": "bearer", "username": new_user.username, "nickname": new_user.nickname}
 
 @app.post("/auth/login")
-async def login(username: str = Form(...), password: str = Form(...), db: Session = Depends(get_db)):
+@limiter.limit("5/minute")
+async def login(request: Request, username: str = Form(...), password: str = Form(...), db: Session = Depends(get_db)):
     user = db.query(User).filter(User.username == username).first()
     if not user or not auth.verify_password(password, user.hashed_password):
         raise HTTPException(status_code=400, detail="Incorrect username or password")
@@ -111,7 +124,22 @@ async def update_profile(
     return {"username": current_user.username, "nickname": current_user.nickname, "detail": "Profile updated successfully"}
 
 @app.post("/auth/sync")
-async def sync_user(request: SyncRequest, db: Session = Depends(get_db)):
+async def sync_user(
+    request: SyncRequest, 
+    token: str = Depends(auth.oauth2_scheme),
+    db: Session = Depends(get_db)
+):
+    if not token:
+        raise HTTPException(status_code=401, detail="Authentication required for sync")
+        
+    try:
+        payload = auth.decode_token_payload(token)
+        if payload.get("sub") != request.supabase_id:
+            raise HTTPException(status_code=403, detail="Token sub does not match requested supabase_id")
+    except Exception as e:
+        logger.error(f"DEBUG: Token validation failed in sync: {e}")
+        raise HTTPException(status_code=401, detail="Invalid token")
+
     logger.info(f"DEBUG: /auth/sync received for supabase_id={request.supabase_id}, email={request.username}")
     
     # 1. 먼저 supabase_id로 검색
@@ -150,6 +178,53 @@ async def sync_user(request: SyncRequest, db: Session = Depends(get_db)):
         
     return {"status": "synced", "nickname": user.nickname}
 
+@app.post("/auth/api-keys")
+async def create_api_key(
+    name: str = Form(...),
+    current_user: User = Depends(auth.get_current_user), 
+    db: Session = Depends(get_db)
+):
+    """
+    Generate a new API Key.
+    The key is returned ONLY ONCE. The client must save it immediately.
+    """
+    plain_key, hashed_key = auth.generate_api_key()
+    
+    new_key = APIKey(
+        user_id=current_user.id,
+        key_prefix=plain_key[:10],
+        hashed_key=hashed_key,
+        name=name,
+        is_active=1
+    )
+    db.add(new_key)
+    db.commit()
+    db.refresh(new_key)
+    
+    return {"api_key": plain_key, "name": name, "prefix": new_key.key_prefix}
+
+@app.get("/auth/api-keys")
+async def list_api_keys(
+    current_user: User = Depends(auth.get_current_user), 
+    db: Session = Depends(get_db)
+):
+    keys = db.query(APIKey).filter(APIKey.user_id == current_user.id, APIKey.is_active == 1).all()
+    return [{"id": k.id, "name": k.name, "prefix": k.key_prefix, "created_at": k.created_at, "last_used_at": k.last_used_at} for k in keys]
+
+@app.delete("/auth/api-keys/{key_id}")
+async def delete_api_key(
+    key_id: int,
+    current_user: User = Depends(auth.get_current_user), 
+    db: Session = Depends(get_db)
+):
+    key = db.query(APIKey).filter(APIKey.id == key_id, APIKey.user_id == current_user.id).first()
+    if not key:
+        raise HTTPException(status_code=404, detail="API Key not found")
+        
+    key.is_active = 0
+    db.commit()
+    return {"message": "API Key deleted"}
+
 # --- Law Endpoints ---
 
 @app.get("/laws/article")
@@ -172,40 +247,53 @@ async def search_laws(query: str, page: int = 1):
     return await law_client.search_laws(query, page=page)
 
 @app.post("/upload")
-async def upload_document(file: UploadFile = File(...)):
+@limiter.limit("10/minute")
+async def upload_document(
+    request: Request,
+    file: UploadFile = File(...),
+    current_user: User = Depends(auth.get_current_user)
+):
     if not file.filename.endswith(".pdf"):
         raise HTTPException(status_code=400, detail="Only PDF files are supported")
     
     content = await file.read()
+    if len(content) > MAX_FILE_SIZE:
+        raise HTTPException(status_code=413, detail="File too large. Maximum size is 10MB.")
+        
     docs = document_processor.process_pdf(content, file.filename)
-    rag_engine.add_documents(docs)
+    await rag_engine.add_documents(docs, user_id=current_user.id)
     return {"message": f"File {file.filename} uploaded and processed"}
 
 @app.get("/uploads")
-async def get_uploads():
-    return rag_engine.get_user_uploads()
+async def get_uploads(current_user: User = Depends(auth.get_current_user)):
+    return rag_engine.get_user_uploads(user_id=current_user.id)
 
 @app.delete("/uploads/{source}")
-async def delete_upload(source: str):
+async def delete_upload(source: str, current_user: User = Depends(auth.get_current_user)):
     # source is the unique filename/source name
-    rag_engine.delete_user_upload(source)
+    rag_engine.delete_user_upload(source, user_id=current_user.id)
     return {"message": f"Source {source} deleted"}
 
 @app.post("/analyze-image")
 @app.post("/analyze-document")
+@limiter.limit("10/minute")
 async def analyze_document(
+    request: Request,
     file: UploadFile = File(...),
-    description: Optional[str] = Form(None)
+    description: Optional[str] = Form(None),
+    current_user: User = Depends(auth.get_current_user)
 ):
     valid_image_types = ["image/jpeg", "image/png", "image/jpg", "image/webp"]
     
+    content = await file.read()
+    if len(content) > MAX_FILE_SIZE:
+        raise HTTPException(status_code=413, detail="File too large. Maximum size is 10MB.")
+        
     if file.content_type in valid_image_types:
-        image_bytes = await file.read()
-        result = await vision_engine.analyze_contract_document(image_bytes=image_bytes, user_description=description)
+        result = await vision_engine.analyze_contract_document(image_bytes=content, user_description=description)
         return result
     elif file.content_type == "application/pdf" or file.filename.lower().endswith(".pdf"):
-        pdf_bytes = await file.read()
-        docs = document_processor.process_pdf(pdf_bytes, file.filename)
+        docs = document_processor.process_pdf(content, file.filename)
         full_text = "\n".join([doc.page_content for doc in docs])
         result = await vision_engine.analyze_contract_document(text_content=full_text, user_description=description)
         return result
@@ -213,7 +301,9 @@ async def analyze_document(
         raise HTTPException(status_code=400, detail="Only image or PDF files are supported")
 
 @app.post("/query")
+@limiter.limit("30/minute")
 async def query_ai(
+    request: Request,
     query: str = Form(...), 
     db: Session = Depends(get_db), 
     current_user: Optional[User] = Depends(auth.get_current_user_optional) # Custom optional helper
@@ -247,7 +337,7 @@ async def query_ai(
                                 docs = document_processor.process_law_xml(law_data, mst)
                                 if docs:
                                     rag_engine.delete_documents_by_mst(mst)
-                                    rag_engine.add_documents(docs)
+                                    await rag_engine.add_documents(docs)
                     except Exception as sync_e:
                         print(f"Warning: Auto-sync failed for law {law_name}: {sync_e}")
 
@@ -269,12 +359,16 @@ async def query_ai(
                     if prec_detail:
                         docs = document_processor.process_precedent_xml(prec_detail, prec_id)
                         if docs:
-                            rag_engine.add_documents(docs)
+                            await rag_engine.add_documents(docs)
         except Exception as prec_sync_e:
             print(f"Warning: Precedent auto-sync failed: {prec_sync_e}")
 
         # 3. Final RAG Query
-        result = await rag_engine.query(query, target_laws=required_laws)
+        result = await rag_engine.query(
+            query, 
+            target_laws=required_laws,
+            current_user_id=current_user.id if current_user else None
+        )
         
         # 3. Save to history if logged in AND intent is REPORT
         intent = result.get("intent", "").upper()
@@ -334,7 +428,7 @@ async def delete_report(report_id: int, current_user: User = Depends(auth.get_cu
 async def report_followup_chat(
     report_id: int,
     query: str = Form(...),
-    current_user: User = Depends(auth.get_current_user_optional),
+    current_user: User = Depends(auth.get_current_user),
     db: Session = Depends(get_db)
 ):
     logger.info(f"DEBUG: report_followup_chat received. report_id={report_id}, query={query}")
@@ -346,17 +440,18 @@ async def report_followup_chat(
     report = db.query(Report).filter(Report.id == report_id).first()
     
     if not report:
-        logger.info(f"DEBUG: Report {report_id} not found in database")
+        logger.error(f"DEBUG: Report {report_id} not found in database")
         raise HTTPException(status_code=404, detail="Report not found")
         
     if report.user_id != current_user.id:
-        logger.info(f"DEBUG: Owner mismatch. Report {report_id} belongs to {report.user_id}, but current user is {current_user.id}")
+        logger.error(f"DEBUG: Owner mismatch. Report {report_id} belongs to user_id={report.user_id}, but current authenticated user is user_id={current_user.id}")
         raise HTTPException(status_code=403, detail="You do not have permission to view this report")
     
     # Context is the report's answer
     report_context = report.answer
     chat_history = report.chat_history or []
     
+    logger.info(f"DEBUG: Invoking RAG engine for followup. Context length={len(report_context)}")
     result = await rag_engine.query_followup(query, report_context, chat_history)
     
     # Update history in DB
@@ -365,7 +460,12 @@ async def report_followup_chat(
     new_history.append({"role": "assistant", "content": result["answer"]})
     
     report.chat_history = new_history
-    db.commit()
+    try:
+        db.commit()
+        logger.info(f"DEBUG: Chat history updated for report {report_id}")
+    except Exception as e:
+        logger.error(f"DEBUG: Failed to commit chat history update: {e}")
+        db.rollback()
     
     return result
 
@@ -428,6 +528,7 @@ async def mark_all_notifications_read(
 
 @app.post("/legal-watch/check")
 async def trigger_legal_watch_check(
+    current_user: User = Depends(auth.get_current_user),
     db: Session = Depends(get_db)
 ):
     # This might be restricted to admin in production

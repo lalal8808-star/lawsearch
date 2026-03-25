@@ -1,5 +1,10 @@
 import sqlite3
 import os
+import sys
+
+# Add current directory to path so we can import database
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+from database import init_db
 
 db_path = "/Users/imjonghwa/lawsearch/backend/law_history.db"
 
@@ -24,6 +29,12 @@ if os.path.exists(db_path):
     
     conn.commit()
     conn.close()
+
     print("Migration complete.")
+    
+    # create any new tables (like api_keys)
+    print("Creating new tables...")
+    init_db()
+    print("Table creation complete.")
 else:
     print("Database not found at", db_path)

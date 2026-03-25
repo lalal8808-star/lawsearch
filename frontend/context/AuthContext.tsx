@@ -72,7 +72,19 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         const nickname = supabaseUser.user_metadata?.full_name || supabaseUser.email?.split('@')[0] || "User";
         const email = supabaseUser.email || supabaseUser.id; // Fallback to ID if email is missing
 
-        // Sync with backend
+        // 🚀 Optimistic Update: 즉시 UI에 반영하여 지연(Lag) 제거!
+        const optimisticUser: User = {
+            username: email,
+            nickname: nickname,
+            supabase_id: supabaseUser.id
+        };
+        setToken(token);
+        setUser(optimisticUser);
+        localStorage.setItem("jonglaw_token", token);
+        localStorage.setItem("jonglaw_user", email);
+        localStorage.setItem("jonglaw_nickname", nickname);
+
+        // Sync with backend asynchronously in the background
         try {
             const res = await api.post("/auth/sync", {
                 supabase_id: supabaseUser.id,
@@ -82,17 +94,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                 headers: { Authorization: `Bearer ${token}` }
             });
 
-            const userData: User = {
-                username: email,
-                nickname: res.data.nickname || nickname,
-                supabase_id: supabaseUser.id
-            };
-            setToken(token);
-            setUser(userData);
-
-            localStorage.setItem("jonglaw_token", token);
-            localStorage.setItem("jonglaw_user", email);
-            localStorage.setItem("jonglaw_nickname", userData.nickname);
+            // 서버 응답에서 닉네임이 바뀌었을 수도 있으므로 덮어쓰기
+            if (res.data.nickname && res.data.nickname !== nickname) {
+                const finalUser = { ...optimisticUser, nickname: res.data.nickname };
+                setUser(finalUser);
+                localStorage.setItem("jonglaw_nickname", res.data.nickname);
+            }
         } catch (err) {
             console.error("Auth sync failed:", err);
         }
