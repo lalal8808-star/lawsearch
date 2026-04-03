@@ -17,5 +17,5 @@ COPY backend/ .
 # Expose the port FastAPI runs on
 EXPOSE 8000
 
-# Command to run the application using shell form for environment variable expansion
-CMD uvicorn main:app --host 0.0.0.0 --port ${PORT:-8000}
+# Command to run migration and then start the application
+CMD python migrate_db.py && uvicorn main:app --host 0.0.0.0 --port ${PORT:-8000}
