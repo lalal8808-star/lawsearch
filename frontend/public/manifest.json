@@ -1,0 +1,21 @@
+{
+  "name": "LawSearch PWA",
+  "short_name": "LawSearch",
+  "description": "Premium Legal Search Application",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#001f3f",
+  "theme_color": "#001f3f",
+  "icons": [
+    {
+      "src": "/icon-192x192.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "/icon-512x512.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ]
+}

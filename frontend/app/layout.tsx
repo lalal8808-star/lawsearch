@@ -16,6 +16,19 @@ const geistMono = Geist_Mono({
 export const metadata: Metadata = {
   title: "JongLaw AI Intelligence",
   description: "대한민국 법령 기반 지능형 법률 분석 엔진",
+  manifest: "/manifest.json",
+  appleWebApp: {
+    capable: true,
+    statusBarStyle: "default",
+    title: "LawSearch",
+  },
+  formatDetection: {
+    telephone: false,
+  },
+};
+
+export const viewport = {
+  themeColor: "#001f3f",
 };
 
 export default function RootLayout({
