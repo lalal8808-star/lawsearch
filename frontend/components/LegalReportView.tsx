@@ -130,25 +130,32 @@ export default function LegalReportView({ reportId, query, answer, sources, engi
         );
     };
 
-    const handlePrint = () => {
+    const downloadPDF = async () => {
+        const element = document.getElementById('report-to-print');
+        if (!element) return;
+
         const now = new Date();
         const dateStr = now.getFullYear().toString().slice(-2) +
             (now.getMonth() + 1).toString().padStart(2, '0') +
             now.getDate().toString().padStart(2, '0');
+        const filename = `${dateStr} 법률보고서(${reportId}).pdf`;
 
-        const originalTitle = document.title;
-        const reportTitle = `${dateStr} 법률보고서(${reportId})`;
-        document.title = reportTitle;
-
-        // For iOS / iPadOS PWA support, sometimes a slight delay helps
-        // especially if the content is dynamic.
-        setTimeout(() => {
-            window.print();
-            // Restore title after a delay to ensure print dialog captures it
-            setTimeout(() => {
-                document.title = originalTitle;
-            }, 1000);
-        }, 50);
+        try {
+            // @ts-ignore
+            const html2pdf = (await import('html2pdf.js')).default;
+            const opt = {
+                margin: 0,
+                filename: filename,
+                image: { type: 'jpeg' as const, quality: 1 },
+                html2canvas: { scale: 2, useCORS: true, letterRendering: true, backgroundColor: '#f8fafc' },
+                jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' as const },
+                pagebreak: { mode: ['avoid-all', 'css', 'legacy'] }
+            };
+            html2pdf().set(opt).from(element).save();
+        } catch (err) {
+            console.error('PDF Download failed:', err);
+            setError('PDF 생성 중 오류가 발생했습니다. 잠시 후 다시 시도해 주세요.');
+        }
     };
 
     if (!mounted) return <div className="min-h-screen bg-[#f8fafc] animate-pulse" />;
@@ -197,198 +204,218 @@ export default function LegalReportView({ reportId, query, answer, sources, engi
                                 <BookmarkCheck size={16} aria-hidden="true" /> 법령 구독 관리 (Legal Watch)
                             </button>
                             <button
+                                aria-label="리포트 PDF 바로 다운로드"
+                                onClick={downloadPDF}
+                                className="flex items-center justify-center gap-2 px-6 py-3 md:py-2 bg-emerald-600 text-white hover:bg-emerald-700 rounded-xl transition-all text-sm font-bold shadow-lg shadow-emerald-600/20"
+                            >
+                                <Download size={16} aria-hidden="true" /> PDF 다운로드
+                            </button>
+                            <button
                                 aria-label="리포트 인쇄 또는 PDF 저장"
-                                onClick={handlePrint}
+                                onClick={() => window.print()}
                                 className="flex items-center justify-center gap-2 px-6 py-3 md:py-2 bg-slate-900 text-white hover:bg-slate-800 rounded-xl transition-all text-sm font-bold shadow-lg shadow-slate-900/20"
                             >
-                                <Printer size={16} aria-hidden="true" /> 리포트 인쇄 / PDF 저장
+                                <Printer size={16} aria-hidden="true" /> 인쇄 미리보기
                             </button>
                         </div>
 
-                        {/* Title Branding */}
-                        <div className="flex justify-between items-end border-b-4 border-slate-900 pb-8">
-                            <div className="space-y-4">
-                                <div className="flex items-center gap-3">
-                                    <div className="relative w-12 h-12 bg-slate-900 rounded-2xl flex items-center justify-center shadow-lg transform -rotate-3">
-                                        <div className="absolute inset-0 bg-blue-500/20 animate-pulse rounded-2xl"></div>
-                                        <Scale className="text-white w-6 h-6" />
+                        <div id="report-to-print" className="space-y-16 print-container">
+                            {/* Title Branding */}
+                            <div className="flex justify-between items-end border-b-4 border-slate-900 pb-8">
+                                <div className="space-y-4">
+                                    <div className="flex items-center gap-3">
+                                        <div className="relative w-12 h-12 bg-slate-900 rounded-2xl flex items-center justify-center shadow-lg transform -rotate-3">
+                                            <div className="absolute inset-0 bg-blue-500/20 animate-pulse rounded-2xl"></div>
+                                            <Scale className="text-white w-6 h-6" />
+                                        </div>
+                                        <div className="flex flex-col">
+                                            <span className="text-2xl font-black text-slate-900 tracking-tighter leading-none">JongLaw AI</span>
+                                            <span className="text-[10px] font-bold text-blue-500 uppercase tracking-widest mt-1">Professional Legal Engine</span>
+                                        </div>
                                     </div>
-                                    <div className="flex flex-col">
-                                        <span className="text-2xl font-black text-slate-900 tracking-tighter leading-none">JongLaw AI</span>
-                                        <span className="text-[10px] font-bold text-blue-500 uppercase tracking-widest mt-1">Professional Legal Engine</span>
+                                    <h1 className="text-3xl md:text-5xl font-black text-slate-900 tracking-tight leading-tight uppercase">Legal Consultation Report</h1>
+                                    <div className="flex items-center gap-3 text-sm text-slate-400 font-mono italic">
+                                        <span>#{reportId}</span>
+                                        <span className="w-1 h-1 bg-slate-200 rounded-full"></span>
+                                        <span>Issued: {new Date().toLocaleDateString()}</span>
+                                        {engine && (
+                                            <>
+                                                <span className="w-1 h-1 bg-slate-200 rounded-full"></span>
+                                                <span className="text-blue-500 font-bold opacity-80 flex items-center gap-1">
+                                                    <Zap size={12} /> {engine} Engine
+                                                </span>
+                                            </>
+                                        )}
                                     </div>
                                 </div>
-                                <h1 className="text-3xl md:text-5xl font-black text-slate-900 tracking-tight leading-tight uppercase">Legal Consultation Report</h1>
-                                <div className="flex items-center gap-3 text-sm text-slate-400 font-mono italic">
-                                    <span>#{reportId}</span>
-                                    <span className="w-1 h-1 bg-slate-200 rounded-full"></span>
-                                    <span>Issued: {new Date().toLocaleDateString()}</span>
-                                    {engine && (
-                                        <>
-                                            <span className="w-1 h-1 bg-slate-200 rounded-full"></span>
-                                            <span className="text-blue-500 font-bold opacity-80 flex items-center gap-1">
-                                                <Zap size={12} /> {engine} Engine
-                                            </span>
-                                        </>
-                                    )}
+                                <div className="flex flex-col items-center md:items-end gap-2 shrink-0">
+                                    <div className="flex items-center gap-2 px-6 py-2 bg-blue-600 text-white rounded-full text-[12px] font-black tracking-widest border shadow-xl shadow-blue-500/30">
+                                        <ShieldCheck size={14} /> VERIFIED
+                                    </div>
+                                    <div className="px-4 py-1.5 bg-red-50 text-red-600 text-[11px] font-bold rounded-lg border border-red-100 uppercase tracking-widest">
+                                        CONFIDENTIAL
+                                    </div>
                                 </div>
                             </div>
-                            <div className="flex flex-col items-center md:items-end gap-2 shrink-0">
-                                <div className="flex items-center gap-2 px-6 py-2 bg-blue-600 text-white rounded-full text-[12px] font-black tracking-widest border shadow-xl shadow-blue-500/30">
-                                    <ShieldCheck size={14} /> VERIFIED
+
+                            {/* Query Section */}
+                            <section className="space-y-6">
+                                <div className="inline-flex items-center gap-2 px-3 py-1 bg-slate-100 rounded-lg text-slate-500 font-bold text-[11px] tracking-wider uppercase">
+                                    <HelpCircle size={14} className="text-slate-400" />
+                                    Client Inquiry
                                 </div>
-                                <div className="px-4 py-1.5 bg-red-50 text-red-600 text-[11px] font-bold rounded-lg border border-red-100 uppercase tracking-widest">
-                                    CONFIDENTIAL
+                                <div className="relative p-6 md:p-10 bg-white border-2 border-slate-100 rounded-[1.5rem] md:rounded-[2.5rem] shadow-sm">
+                                    <div className="absolute top-8 left-8 text-slate-100 select-none hidden md:block">
+                                        <Scale size={64} />
+                                    </div>
+                                    <div className="relative text-lg md:text-xl text-slate-700 leading-relaxed font-semibold italic md:indent-6 whitespace-pre-wrap">
+                                        "{query}"
+                                    </div>
+                                </div>
+                            </section>
+
+                            {/* Opinion Section */}
+                            <section className="space-y-12">
+                                <div className="inline-flex items-center gap-2 px-3 py-1 bg-blue-50 rounded-lg text-blue-600 font-bold text-[11px] tracking-wider uppercase">
+                                    <Zap size={14} className="text-blue-500 animate-pulse" />
+                                    Legal Opinion
+                                </div>
+
+                                <div className="space-y-20">
+                                    {/* 1. Overview */}
+                                    {sections.overview && (
+                                        <div className="group space-y-6">
+                                            <div className="flex items-center gap-4 border-l-8 border-slate-900 pl-6">
+                                                <span className="text-lg font-black text-slate-300">01</span>
+                                                <h3 className="text-2xl font-black text-slate-900 uppercase tracking-tight">사건 개요</h3>
+                                            </div>
+                                            <div className="text-slate-700 pl-0 md:pl-14 text-base md:text-lg">
+                                                {renderContent(sections.overview)}
+                                            </div>
+                                        </div>
+                                    )}
+
+                                    {/* 2. Analysis */}
+                                    {sections.analysis && (
+                                        <div className="group space-y-6">
+                                            <div className="flex items-center gap-4 border-l-8 border-slate-900 pl-6">
+                                                <span className="text-lg font-black text-slate-300">02</span>
+                                                <h3 className="text-2xl font-black text-slate-900 uppercase tracking-tight">법률 분석</h3>
+                                            </div>
+                                            <div className="text-slate-700 pl-0 md:pl-14 text-base md:text-lg">
+                                                {renderContent(sections.analysis)}
+                                            </div>
+                                        </div>
+                                    )}
+
+                                    {/* 3. Conclusion */}
+                                    {sections.conclusion && (
+                                        <div className="group space-y-6">
+                                            <div className="flex items-center gap-4 border-l-8 border-blue-600 pl-6">
+                                                <span className="text-lg font-black text-blue-400">03</span>
+                                                <h3 className="text-2xl font-black text-blue-600 uppercase tracking-tight">핵심 결론</h3>
+                                            </div>
+                                            <div className="ml-0 md:ml-14 relative">
+                                                <div className="relative bg-blue-50/50 shadow-sm border border-blue-100 p-8 md:p-12 rounded-[1.5rem] md:rounded-[2.5rem] text-slate-900 text-lg md:text-xl font-medium leading-relaxed">
+                                                    {renderContent(sections.conclusion)}
+                                                </div>
+                                            </div>
+                                        </div>
+                                    )}
+
+                                    {/* 4. Steps */}
+                                    {sections.action && (
+                                        <div className="group space-y-6">
+                                            <div className="flex items-center gap-4 border-l-8 border-emerald-600 pl-6">
+                                                <span className="text-lg font-black text-emerald-400">04</span>
+                                                <h3 className="text-2xl font-black text-emerald-600 uppercase tracking-tight">향후 조치</h3>
+                                            </div>
+                                            <div className="text-slate-700 pl-0 md:pl-14 text-base md:text-lg">
+                                                {renderContent(sections.action)}
+                                            </div>
+                                        </div>
+                                    )}
+
+                                    {/* Sources & Subscription Section */}
+                                    {sources && sources.length > 0 && (
+                                        <section className="space-y-6">
+                                            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+                                                <div className="inline-flex items-center gap-2 px-3 py-1 bg-slate-100 rounded-lg text-slate-500 font-bold text-[11px] tracking-wider uppercase">
+                                                    <BookOpen size={14} className="text-slate-400" />
+                                                    Relevant Laws & Sources
+                                                </div>
+                                                <div className="flex items-center gap-2 text-[10px] text-blue-500 font-bold bg-blue-50 px-3 py-1 rounded-full animate-pulse">
+                                                    <Info size={12} /> 'Watch'를 눌러 개정 정보를 알림받으세요.
+                                                </div>
+                                            </div>
+                                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                                {sources.map((src, idx) => {
+                                                    const sourceName = src.source || "";
+                                                    const isLaw = src.type === "law" || (sourceName && (
+                                                        sourceName.endsWith("법") ||
+                                                        sourceName.endsWith("령") ||
+                                                        sourceName.endsWith("규칙") ||
+                                                        sourceName.endsWith("률") ||
+                                                        sourceName.includes("법 [") || // Matches "민법 [제750조]"
+                                                        sourceName.includes("령 [")
+                                                    ));
+
+                                                    // Clean law name for subscription (remove article parts)
+                                                    const cleanLawName = sourceName.split(" [")[0].trim();
+                                                    const isSubscribed = subscribedLaws.includes(cleanLawName);
+                                                    const isSubmitting = submittingLaw === cleanLawName;
+
+                                                    return (
+                                                        <div key={idx} className="p-4 bg-white border border-slate-100 rounded-2xl flex items-center justify-between group hover:border-blue-200 transition-all shadow-sm">
+                                                            <div className="flex items-center gap-3">
+                                                                <div className={`p-2 rounded-lg ${isLaw ? "bg-blue-50 text-blue-500" : "bg-slate-50 text-slate-400"}`}>
+                                                                    <Scale size={18} />
+                                                                </div>
+                                                                <div className="flex flex-col">
+                                                                    <span className="text-sm font-bold text-slate-800 tracking-tight">{src.source}</span>
+                                                                    <span className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">{isLaw ? "Statute" : "Document"}</span>
+                                                                </div>
+                                                            </div>
+                                                            {isLaw && user && (
+                                                                <button
+                                                                    aria-label={`${cleanLawName} 법령 구독 ${isSubscribed ? "취소" : "설정"}`}
+                                                                    onClick={() => toggleSubscription(cleanLawName)}
+                                                                    disabled={isSubmitting}
+                                                                    className={`p-2 rounded-xl transition-all flex items-center gap-2 text-[10px] font-black uppercase tracking-widest ${isSubscribed
+                                                                        ? "bg-blue-50 text-blue-600 border border-blue-100"
+                                                                        : "bg-slate-50 text-slate-400 border border-transparent hover:bg-blue-50 hover:text-blue-500"
+                                                                        }`}
+                                                                >
+                                                                    {isSubmitting ? (
+                                                                        <Loader2 size={14} className="animate-spin" aria-hidden="true" />
+                                                                    ) : isSubscribed ? (
+                                                                        <BookmarkCheck size={14} aria-hidden="true" />
+                                                                    ) : (
+                                                                        <BookmarkPlus size={14} aria-hidden="true" />
+                                                                    )}
+                                                                    {isSubscribed ? "Subscribed" : "Watch"}
+                                                                </button>
+                                                            )}
+                                                        </div>
+                                                    );
+                                                })}
+                                            </div>
+                                        </section>
+                                    )}
+                                </div>
+                            </section>
+
+                            <div className="flex flex-col items-center gap-6 pt-20 border-t border-slate-100 opacity-40 select-none pb-12">
+                                <div className="flex items-center gap-3 text-slate-400 grayscale">
+                                    <Scale size={20} />
+                                    <span className="text-[11px] font-black tracking-[0.2em]">JONGLAW AI TECHNOLOGY</span>
+                                </div>
+                                <div className="text-[10px] font-mono font-bold text-slate-300 tracking-[0.6em] text-center uppercase">
+                                    Secure Encrypted Session Report<br />
+                                    Verified Authentication Token
                                 </div>
                             </div>
                         </div>
-
-                        {/* Query Section */}
-                        <section className="space-y-6">
-                            <div className="inline-flex items-center gap-2 px-3 py-1 bg-slate-100 rounded-lg text-slate-500 font-bold text-[11px] tracking-wider uppercase">
-                                <HelpCircle size={14} className="text-slate-400" />
-                                Client Inquiry
-                            </div>
-                            <div className="relative p-6 md:p-10 bg-white border-2 border-slate-100 rounded-[1.5rem] md:rounded-[2.5rem] shadow-sm">
-                                <div className="absolute top-8 left-8 text-slate-100 select-none hidden md:block">
-                                    <Scale size={64} />
-                                </div>
-                                <div className="relative text-lg md:text-xl text-slate-700 leading-relaxed font-semibold italic md:indent-6 whitespace-pre-wrap">
-                                    "{query}"
-                                </div>
-                            </div>
-                        </section>
-
-                        {/* Opinion Section */}
-                        <section className="space-y-12">
-                            <div className="inline-flex items-center gap-2 px-3 py-1 bg-blue-50 rounded-lg text-blue-600 font-bold text-[11px] tracking-wider uppercase">
-                                <Zap size={14} className="text-blue-500 animate-pulse" />
-                                Legal Opinion
-                            </div>
-
-                            <div className="space-y-20">
-                                {/* 1. Overview */}
-                                {sections.overview && (
-                                    <div className="group space-y-6">
-                                        <div className="flex items-center gap-4 border-l-8 border-slate-900 pl-6">
-                                            <span className="text-lg font-black text-slate-300">01</span>
-                                            <h3 className="text-2xl font-black text-slate-900 uppercase tracking-tight">사건 개요</h3>
-                                        </div>
-                                        <div className="text-slate-700 pl-0 md:pl-14 text-base md:text-lg">
-                                            {renderContent(sections.overview)}
-                                        </div>
-                                    </div>
-                                )}
-
-                                {/* 2. Analysis */}
-                                {sections.analysis && (
-                                    <div className="group space-y-6">
-                                        <div className="flex items-center gap-4 border-l-8 border-slate-900 pl-6">
-                                            <span className="text-lg font-black text-slate-300">02</span>
-                                            <h3 className="text-2xl font-black text-slate-900 uppercase tracking-tight">법률 분석</h3>
-                                        </div>
-                                        <div className="text-slate-700 pl-0 md:pl-14 text-base md:text-lg">
-                                            {renderContent(sections.analysis)}
-                                        </div>
-                                    </div>
-                                )}
-
-                                {/* 3. Conclusion */}
-                                {sections.conclusion && (
-                                    <div className="group space-y-6">
-                                        <div className="flex items-center gap-4 border-l-8 border-blue-600 pl-6">
-                                            <span className="text-lg font-black text-blue-400">03</span>
-                                            <h3 className="text-2xl font-black text-blue-600 uppercase tracking-tight">핵심 결론</h3>
-                                        </div>
-                                        <div className="ml-0 md:ml-14 relative">
-                                            <div className="relative bg-blue-50/50 shadow-sm border border-blue-100 p-8 md:p-12 rounded-[1.5rem] md:rounded-[2.5rem] text-slate-900 text-lg md:text-xl font-medium leading-relaxed">
-                                                {renderContent(sections.conclusion)}
-                                            </div>
-                                        </div>
-                                    </div>
-                                )}
-
-                                {/* 4. Steps */}
-                                {sections.action && (
-                                    <div className="group space-y-6">
-                                        <div className="flex items-center gap-4 border-l-8 border-emerald-600 pl-6">
-                                            <span className="text-lg font-black text-emerald-400">04</span>
-                                            <h3 className="text-2xl font-black text-emerald-600 uppercase tracking-tight">향후 조치</h3>
-                                        </div>
-                                        <div className="text-slate-700 pl-0 md:pl-14 text-base md:text-lg">
-                                            {renderContent(sections.action)}
-                                        </div>
-                                    </div>
-                                )}
-
-                                {/* Sources & Subscription Section */}
-                                {sources && sources.length > 0 && (
-                                    <section className="space-y-6">
-                                        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-                                            <div className="inline-flex items-center gap-2 px-3 py-1 bg-slate-100 rounded-lg text-slate-500 font-bold text-[11px] tracking-wider uppercase">
-                                                <BookOpen size={14} className="text-slate-400" />
-                                                Relevant Laws & Sources
-                                            </div>
-                                            <div className="flex items-center gap-2 text-[10px] text-blue-500 font-bold bg-blue-50 px-3 py-1 rounded-full animate-pulse">
-                                                <Info size={12} /> 'Watch'를 눌러 개정 정보를 알림받으세요.
-                                            </div>
-                                        </div>
-                                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                                            {sources.map((src, idx) => {
-                                                const sourceName = src.source || "";
-                                                const isLaw = src.type === "law" || (sourceName && (
-                                                    sourceName.endsWith("법") ||
-                                                    sourceName.endsWith("령") ||
-                                                    sourceName.endsWith("규칙") ||
-                                                    sourceName.endsWith("률") ||
-                                                    sourceName.includes("법 [") || // Matches "민법 [제750조]"
-                                                    sourceName.includes("령 [")
-                                                ));
-
-                                                // Clean law name for subscription (remove article parts)
-                                                const cleanLawName = sourceName.split(" [")[0].trim();
-                                                const isSubscribed = subscribedLaws.includes(cleanLawName);
-                                                const isSubmitting = submittingLaw === cleanLawName;
-
-                                                return (
-                                                    <div key={idx} className="p-4 bg-white border border-slate-100 rounded-2xl flex items-center justify-between group hover:border-blue-200 transition-all shadow-sm">
-                                                        <div className="flex items-center gap-3">
-                                                            <div className={`p-2 rounded-lg ${isLaw ? "bg-blue-50 text-blue-500" : "bg-slate-50 text-slate-400"}`}>
-                                                                <Scale size={18} />
-                                                            </div>
-                                                            <div className="flex flex-col">
-                                                                <span className="text-sm font-bold text-slate-800 tracking-tight">{src.source}</span>
-                                                                <span className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">{isLaw ? "Statute" : "Document"}</span>
-                                                            </div>
-                                                        </div>
-                                                        {isLaw && user && (
-                                                            <button
-                                                                aria-label={`${cleanLawName} 법령 구독 ${isSubscribed ? "취소" : "설정"}`}
-                                                                onClick={() => toggleSubscription(cleanLawName)}
-                                                                disabled={isSubmitting}
-                                                                className={`p-2 rounded-xl transition-all flex items-center gap-2 text-[10px] font-black uppercase tracking-widest ${isSubscribed
-                                                                    ? "bg-blue-50 text-blue-600 border border-blue-100"
-                                                                    : "bg-slate-50 text-slate-400 border border-transparent hover:bg-blue-50 hover:text-blue-500"
-                                                                    }`}
-                                                            >
-                                                                {isSubmitting ? (
-                                                                    <Loader2 size={14} className="animate-spin" aria-hidden="true" />
-                                                                ) : isSubscribed ? (
-                                                                    <BookmarkCheck size={14} aria-hidden="true" />
-                                                                ) : (
-                                                                    <BookmarkPlus size={14} aria-hidden="true" />
-                                                                )}
-                                                                {isSubscribed ? "Subscribed" : "Watch"}
-                                                            </button>
-                                                        )}
-                                                    </div>
-                                                );
-                                            })}
-                                        </div>
-                                    </section>
-                                )}
-                            </div>
-                        </section>
 
                         {/* Integrated Follow-up Chat */}
                         {/* Chatbot Section - Show if we have a valid reportId (number or JL- prefix) */}
@@ -400,17 +427,6 @@ export default function LegalReportView({ reportId, query, answer, sources, engi
                                 />
                             </div>
                         )}
-
-                        <div className="flex flex-col items-center gap-6 pt-20 border-t border-slate-100 opacity-40 select-none pb-12">
-                            <div className="flex items-center gap-3 text-slate-400 grayscale">
-                                <Scale size={20} />
-                                <span className="text-[11px] font-black tracking-[0.2em]">JONGLAW AI TECHNOLOGY</span>
-                            </div>
-                            <div className="text-[10px] font-mono font-bold text-slate-300 tracking-[0.6em] text-center uppercase">
-                                Secure Encrypted Session Report<br />
-                                Verified Authentication Token
-                            </div>
-                        </div>
                     </div>
                 </div>
             </div>
