@@ -130,63 +130,23 @@ export default function LegalReportView({ reportId, query, answer, sources, engi
         );
     };
 
-    const downloadPDF = () => {
-        const element = document.getElementById('report-to-print');
-        if (!element) return;
-
+    const handlePrint = () => {
         const now = new Date();
         const dateStr = now.getFullYear().toString().slice(-2) +
             (now.getMonth() + 1).toString().padStart(2, '0') +
             now.getDate().toString().padStart(2, '0');
-        const title = `${dateStr} 법률보고서(${reportId})`;
 
-        // For mobile/iPad, opening in a new window often bypasses PWA print bugs
-        const printWindow = window.open('', '_blank');
-        if (!printWindow) {
-            setError('팝업이 차단되었습니다. 설정을 확인해 주세요.');
-            return;
-        }
+        const originalTitle = document.title;
+        const reportTitle = `${dateStr} 법률보고서(${reportId})`;
+        document.title = reportTitle;
 
-        // Capture all styles to ensure the report looks the same
-        const styles = Array.from(document.querySelectorAll('style, link[rel="stylesheet"]'))
-            .map(s => s.outerHTML)
-            .join('');
-
-        printWindow.document.write(`
-            <!DOCTYPE html>
-            <html>
-                <head>
-                    <title>${title}</title>
-                    ${styles}
-                    <style>
-                        @media print {
-                            @page { margin: 15mm; }
-                            .print-hidden { display: none !important; }
-                            body { background: white !important; }
-                        }
-                        body { 
-                            background: white !important; 
-                            padding: 40px !important; 
-                            font-family: serif;
-                        }
-                        #report-to-print { max-width: 800px; margin: 0 auto; }
-                    </style>
-                </head>
-                <body>
-                    <div id="report-to-print">
-                        ${element.innerHTML}
-                    </div>
-                    <script>
-                        window.onload = () => {
-                            setTimeout(() => {
-                                window.print();
-                            }, 500);
-                        };
-                    </script>
-                </body>
-            </html>
-        `);
-        printWindow.document.close();
+        // On iOS, sometimes the print dialog needs the main thread to be clear
+        setTimeout(() => {
+            window.print();
+            setTimeout(() => {
+                document.title = originalTitle;
+            }, 500);
+        }, 100);
     };
 
     if (!mounted) return <div className="min-h-screen bg-[#f8fafc] animate-pulse" />;
@@ -236,18 +196,26 @@ export default function LegalReportView({ reportId, query, answer, sources, engi
                             </button>
                             <button
                                 aria-label="리포트 PDF 저장"
-                                onClick={downloadPDF}
+                                onClick={handlePrint}
                                 className="flex items-center justify-center gap-2 px-6 py-3 md:py-2 bg-emerald-600 text-white hover:bg-emerald-700 rounded-xl transition-all text-sm font-bold shadow-lg shadow-emerald-600/20"
                             >
-                                <Download size={16} aria-hidden="true" /> PDF 다운로드
+                                <Download size={16} aria-hidden="true" /> PDF 저장
                             </button>
                             <button
-                                aria-label="리포트 인쇄 또는 PDF 저장"
-                                onClick={() => window.print()}
+                                aria-label="리포트 인쇄 미리보기"
+                                onClick={handlePrint}
                                 className="flex items-center justify-center gap-2 px-6 py-3 md:py-2 bg-slate-900 text-white hover:bg-slate-800 rounded-xl transition-all text-sm font-bold shadow-lg shadow-slate-900/20"
                             >
                                 <Printer size={16} aria-hidden="true" /> 인쇄 미리보기
                             </button>
+                        </div>
+
+                        {/* iPad/iPhone PDF Save Guide */}
+                        <div className="hidden md:hidden lg:hidden print:hidden md:group-hover:block bg-blue-50 border border-blue-100 p-4 rounded-xl text-xs text-blue-700 mb-8">
+                            <p className="font-bold flex items-center gap-2 mb-1">
+                                <Info size={14} /> 아이패드/아이폰 PDF 저장 팁
+                            </p>
+                            <p>프린트 창에서 리포트 미리보기 이미지를 <b>두 손가락으로 펼치거나(Pinch out)</b> 길게 누르면 PDF로 변환되어 저장할 수 있습니다.</p>
                         </div>
 
                         <div id="report-to-print" className="space-y-16 print-container">

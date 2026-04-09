@@ -18,3 +18,4 @@ SQLAlchemy
 supabase
 cryptography
 slowapi
+fpdf2
