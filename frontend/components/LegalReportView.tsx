@@ -42,7 +42,20 @@ export default function LegalReportView({ reportId, query, answer, sources, engi
         if (user) {
             fetchSubscriptions();
         }
-    }, [user]);
+
+        // Set document title for PDF filename auto-generation
+        const now = new Date();
+        const dateStr = now.getFullYear().toString().slice(-2) +
+            (now.getMonth() + 1).toString().padStart(2, '0') +
+            now.getDate().toString().padStart(2, '0');
+        const reportTitle = `${dateStr} 법률보고서(${reportId})`;
+        const originalTitle = document.title;
+        document.title = reportTitle;
+
+        return () => {
+            document.title = originalTitle;
+        };
+    }, [user, reportId]);
 
     const fetchSubscriptions = async () => {
         try {
@@ -131,22 +144,7 @@ export default function LegalReportView({ reportId, query, answer, sources, engi
     };
 
     const handlePrint = () => {
-        const now = new Date();
-        const dateStr = now.getFullYear().toString().slice(-2) +
-            (now.getMonth() + 1).toString().padStart(2, '0') +
-            now.getDate().toString().padStart(2, '0');
-
-        const originalTitle = document.title;
-        const reportTitle = `${dateStr} 법률보고서(${reportId})`;
-        document.title = reportTitle;
-
-        // On iOS, sometimes the print dialog needs the main thread to be clear
-        setTimeout(() => {
-            window.print();
-            setTimeout(() => {
-                document.title = originalTitle;
-            }, 500);
-        }, 100);
+        window.print();
     };
 
     if (!mounted) return <div className="min-h-screen bg-[#f8fafc] animate-pulse" />;
