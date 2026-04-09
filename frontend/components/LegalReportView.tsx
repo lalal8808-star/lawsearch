@@ -34,6 +34,7 @@ export default function LegalReportView({ reportId, query, answer, sources, engi
     const { user } = useAuth();
     const [subscribedLaws, setSubscribedLaws] = useState<string[]>([]);
     const [submittingLaw, setSubmittingLaw] = useState<string | null>(null);
+    const [isGeneratingPDF, setIsGeneratingPDF] = useState(false);
 
     const [error, setError] = useState<string | null>(null);
 
@@ -131,30 +132,42 @@ export default function LegalReportView({ reportId, query, answer, sources, engi
     };
 
     const downloadPDF = async () => {
-        const element = document.getElementById('report-to-print');
-        if (!element) return;
-
-        const now = new Date();
-        const dateStr = now.getFullYear().toString().slice(-2) +
-            (now.getMonth() + 1).toString().padStart(2, '0') +
-            now.getDate().toString().padStart(2, '0');
-        const filename = `${dateStr} 법률보고서(${reportId}).pdf`;
+        setIsGeneratingPDF(true);
+        setError(null);
 
         try {
+            const element = document.getElementById('report-to-print');
+            if (!element) return;
+
+            const now = new Date();
+            const dateStr = now.getFullYear().toString().slice(-2) +
+                (now.getMonth() + 1).toString().padStart(2, '0') +
+                now.getDate().toString().padStart(2, '0');
+            const filename = `${dateStr} 법률보고서(${reportId}).pdf`;
+
             // @ts-ignore
             const html2pdf = (await import('html2pdf.js')).default;
             const opt = {
-                margin: 0,
+                margin: 10, // Simplified margin
                 filename: filename,
-                image: { type: 'jpeg' as const, quality: 1 },
-                html2canvas: { scale: 2, useCORS: true, letterRendering: true, backgroundColor: '#f8fafc' },
+                image: { type: 'jpeg' as const, quality: 0.95 },
+                html2canvas: { 
+                    scale: 1.5, // Reduced scale for better mobile performance
+                    useCORS: true, 
+                    letterRendering: true, 
+                    backgroundColor: '#f8fafc',
+                    logging: false
+                },
                 jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' as const },
                 pagebreak: { mode: ['avoid-all', 'css', 'legacy'] }
             };
-            html2pdf().set(opt).from(element).save();
+            
+            await html2pdf().set(opt).from(element).save();
         } catch (err) {
             console.error('PDF Download failed:', err);
-            setError('PDF 생성 중 오류가 발생했습니다. 잠시 후 다시 시도해 주세요.');
+            setError('PDF 생성 중 오류가 발생했습니다. 기기의 메모리가 부족하거나 보고서 내용이 너무 길 수 있습니다.');
+        } finally {
+            setIsGeneratingPDF(false);
         }
     };
 
@@ -206,9 +219,18 @@ export default function LegalReportView({ reportId, query, answer, sources, engi
                             <button
                                 aria-label="리포트 PDF 바로 다운로드"
                                 onClick={downloadPDF}
-                                className="flex items-center justify-center gap-2 px-6 py-3 md:py-2 bg-emerald-600 text-white hover:bg-emerald-700 rounded-xl transition-all text-sm font-bold shadow-lg shadow-emerald-600/20"
+                                disabled={isGeneratingPDF}
+                                className={`flex items-center justify-center gap-2 px-6 py-3 md:py-2 bg-emerald-600 text-white hover:bg-emerald-700 rounded-xl transition-all text-sm font-bold shadow-lg shadow-emerald-600/20 ${isGeneratingPDF ? "opacity-50 cursor-not-allowed" : ""}`}
                             >
-                                <Download size={16} aria-hidden="true" /> PDF 다운로드
+                                {isGeneratingPDF ? (
+                                    <>
+                                        <Loader2 size={16} className="animate-spin" aria-hidden="true" /> 생성 중...
+                                    </>
+                                ) : (
+                                    <>
+                                        <Download size={16} aria-hidden="true" /> PDF 다운로드
+                                    </>
+                                )}
                             </button>
                             <button
                                 aria-label="리포트 인쇄 또는 PDF 저장"
