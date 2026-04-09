@@ -2,6 +2,7 @@
 
 import { Scale, HelpCircle, ShieldCheck, Zap, Printer, Download, BookOpen, Loader2, X, Info, MessageCircle, MessageSquare, Bookmark, BookmarkPlus, BookmarkCheck, AlertCircle } from "lucide-react";
 import { useState, useEffect } from "react";
+import { useRouter } from "next/navigation";
 import axios from "axios";
 import api from "@/utils/api";
 import { useAuth } from "@/context/AuthContext";
@@ -29,6 +30,7 @@ interface LegalReportViewProps {
 
 export default function LegalReportView({ reportId, query, answer, sources, engine, chat_history = [] }: LegalReportViewProps) {
     const [mounted, setMounted] = useState(false);
+    const router = useRouter();
     const { user } = useAuth();
     const [subscribedLaws, setSubscribedLaws] = useState<string[]>([]);
     const [submittingLaw, setSubmittingLaw] = useState<string | null>(null);
@@ -177,6 +179,13 @@ export default function LegalReportView({ reportId, query, answer, sources, engi
                         )}
 
                         <div className="flex flex-col md:flex-row justify-end items-stretch md:items-center gap-3 print:hidden mb-12 border-b border-slate-100 pb-4">
+                            <button
+                                aria-label="리포트 닫기"
+                                onClick={() => router.push("/")}
+                                className="flex items-center justify-center gap-2 px-6 py-3 md:py-2 bg-white text-slate-600 hover:bg-slate-50 border border-slate-100 rounded-xl transition-all text-sm font-bold"
+                            >
+                                <X size={16} aria-hidden="true" /> 닫기
+                            </button>
                             <button
                                 aria-label="법령 구독 관리 열기"
                                 onClick={() => {
