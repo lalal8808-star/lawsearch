@@ -128,6 +128,27 @@ export default function LegalReportView({ reportId, query, answer, sources, engi
         );
     };
 
+    const handlePrint = () => {
+        const now = new Date();
+        const dateStr = now.getFullYear().toString().slice(-2) +
+            (now.getMonth() + 1).toString().padStart(2, '0') +
+            now.getDate().toString().padStart(2, '0');
+
+        const originalTitle = document.title;
+        const reportTitle = `${dateStr} 법률보고서(${reportId})`;
+        document.title = reportTitle;
+
+        // For iOS / iPadOS PWA support, sometimes a slight delay helps
+        // especially if the content is dynamic.
+        setTimeout(() => {
+            window.print();
+            // Restore title after a delay to ensure print dialog captures it
+            setTimeout(() => {
+                document.title = originalTitle;
+            }, 1000);
+        }, 50);
+    };
+
     if (!mounted) return <div className="min-h-screen bg-[#f8fafc] animate-pulse" />;
 
     return (
@@ -168,7 +189,7 @@ export default function LegalReportView({ reportId, query, answer, sources, engi
                             </button>
                             <button
                                 aria-label="리포트 인쇄 또는 PDF 저장"
-                                onClick={() => window.print()}
+                                onClick={handlePrint}
                                 className="flex items-center justify-center gap-2 px-6 py-3 md:py-2 bg-slate-900 text-white hover:bg-slate-800 rounded-xl transition-all text-sm font-bold shadow-lg shadow-slate-900/20"
                             >
                                 <Printer size={16} aria-hidden="true" /> 리포트 인쇄 / PDF 저장
