@@ -34,7 +34,6 @@ export default function LegalReportView({ reportId, query, answer, sources, engi
     const { user } = useAuth();
     const [subscribedLaws, setSubscribedLaws] = useState<string[]>([]);
     const [submittingLaw, setSubmittingLaw] = useState<string | null>(null);
-    const [isGeneratingPDF, setIsGeneratingPDF] = useState(false);
 
     const [error, setError] = useState<string | null>(null);
 
@@ -131,44 +130,63 @@ export default function LegalReportView({ reportId, query, answer, sources, engi
         );
     };
 
-    const downloadPDF = async () => {
-        setIsGeneratingPDF(true);
-        setError(null);
+    const downloadPDF = () => {
+        const element = document.getElementById('report-to-print');
+        if (!element) return;
 
-        try {
-            const element = document.getElementById('report-to-print');
-            if (!element) return;
+        const now = new Date();
+        const dateStr = now.getFullYear().toString().slice(-2) +
+            (now.getMonth() + 1).toString().padStart(2, '0') +
+            now.getDate().toString().padStart(2, '0');
+        const title = `${dateStr} 법률보고서(${reportId})`;
 
-            const now = new Date();
-            const dateStr = now.getFullYear().toString().slice(-2) +
-                (now.getMonth() + 1).toString().padStart(2, '0') +
-                now.getDate().toString().padStart(2, '0');
-            const filename = `${dateStr} 법률보고서(${reportId}).pdf`;
-
-            // @ts-ignore
-            const html2pdf = (await import('html2pdf.js')).default;
-            const opt = {
-                margin: 10, // Simplified margin
-                filename: filename,
-                image: { type: 'jpeg' as const, quality: 0.95 },
-                html2canvas: { 
-                    scale: 1.5, // Reduced scale for better mobile performance
-                    useCORS: true, 
-                    letterRendering: true, 
-                    backgroundColor: '#f8fafc',
-                    logging: false
-                },
-                jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' as const },
-                pagebreak: { mode: ['avoid-all', 'css', 'legacy'] }
-            };
-            
-            await html2pdf().set(opt).from(element).save();
-        } catch (err) {
-            console.error('PDF Download failed:', err);
-            setError('PDF 생성 중 오류가 발생했습니다. 기기의 메모리가 부족하거나 보고서 내용이 너무 길 수 있습니다.');
-        } finally {
-            setIsGeneratingPDF(false);
+        // For mobile/iPad, opening in a new window often bypasses PWA print bugs
+        const printWindow = window.open('', '_blank');
+        if (!printWindow) {
+            setError('팝업이 차단되었습니다. 설정을 확인해 주세요.');
+            return;
         }
+
+        // Capture all styles to ensure the report looks the same
+        const styles = Array.from(document.querySelectorAll('style, link[rel="stylesheet"]'))
+            .map(s => s.outerHTML)
+            .join('');
+
+        printWindow.document.write(`
+            <!DOCTYPE html>
+            <html>
+                <head>
+                    <title>${title}</title>
+                    ${styles}
+                    <style>
+                        @media print {
+                            @page { margin: 15mm; }
+                            .print-hidden { display: none !important; }
+                            body { background: white !important; }
+                        }
+                        body { 
+                            background: white !important; 
+                            padding: 40px !important; 
+                            font-family: serif;
+                        }
+                        #report-to-print { max-width: 800px; margin: 0 auto; }
+                    </style>
+                </head>
+                <body>
+                    <div id="report-to-print">
+                        ${element.innerHTML}
+                    </div>
+                    <script>
+                        window.onload = () => {
+                            setTimeout(() => {
+                                window.print();
+                            }, 500);
+                        };
+                    </script>
+                </body>
+            </html>
+        `);
+        printWindow.document.close();
     };
 
     if (!mounted) return <div className="min-h-screen bg-[#f8fafc] animate-pulse" />;
@@ -217,20 +235,11 @@ export default function LegalReportView({ reportId, query, answer, sources, engi
                                 <BookmarkCheck size={16} aria-hidden="true" /> 법령 구독 관리 (Legal Watch)
                             </button>
                             <button
-                                aria-label="리포트 PDF 바로 다운로드"
+                                aria-label="리포트 PDF 저장"
                                 onClick={downloadPDF}
-                                disabled={isGeneratingPDF}
-                                className={`flex items-center justify-center gap-2 px-6 py-3 md:py-2 bg-emerald-600 text-white hover:bg-emerald-700 rounded-xl transition-all text-sm font-bold shadow-lg shadow-emerald-600/20 ${isGeneratingPDF ? "opacity-50 cursor-not-allowed" : ""}`}
+                                className="flex items-center justify-center gap-2 px-6 py-3 md:py-2 bg-emerald-600 text-white hover:bg-emerald-700 rounded-xl transition-all text-sm font-bold shadow-lg shadow-emerald-600/20"
                             >
-                                {isGeneratingPDF ? (
-                                    <>
-                                        <Loader2 size={16} className="animate-spin" aria-hidden="true" /> 생성 중...
-                                    </>
-                                ) : (
-                                    <>
-                                        <Download size={16} aria-hidden="true" /> PDF 다운로드
-                                    </>
-                                )}
+                                <Download size={16} aria-hidden="true" /> PDF 다운로드
                             </button>
                             <button
                                 aria-label="리포트 인쇄 또는 PDF 저장"
