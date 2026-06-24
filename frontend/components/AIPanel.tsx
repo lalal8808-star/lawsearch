@@ -125,7 +125,7 @@ export default function AIPanel() {
                     content: `${selectedImage.name} 분석 결과입니다.`,
                     visionData: res.data,
                     intent: "VISION_ANALYSIS",
-                    engine: "gpt-4o"
+                    engine: "gpt-5.5"
                 };
                 setMessages((prev) => [...prev, assistantMsg]);
                 setSelectedImage(null); // Clear after send
@@ -159,7 +159,7 @@ export default function AIPanel() {
                 // Append an empty assistant message for streaming
                 setMessages((prev) => [
                     ...prev, 
-                    { role: "assistant", content: "", sources: [], intent: "CHAT", engine: "gpt-4o" }
+                    { role: "assistant", content: "", sources: [], intent: "CHAT", engine: "gpt-5.5" }
                 ]);
 
                 while (true) {
@@ -223,7 +223,7 @@ export default function AIPanel() {
 
                 // Auto open report only if intent is REPORT
                 if (intent === "REPORT") {
-                    openReportWindow(currentQuery, assistantAnswer, sources, "gpt-4o", [], undefined);
+                    openReportWindow(currentQuery, assistantAnswer, sources, "gpt-5.5", [], undefined);
                     window.dispatchEvent(new CustomEvent('report-generated'));
                 }
             }
