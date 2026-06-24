@@ -63,6 +63,7 @@ export default function ReportPage() {
                     sources={reportData.sources}
                     engine={reportData.engine}
                     chat_history={reportData.chat_history || []}
+                    visionData={reportData.visionData}
                 />
 
                 <LegalWatchModal

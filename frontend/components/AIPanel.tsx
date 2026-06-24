@@ -71,7 +71,7 @@ export default function AIPanel() {
     }, [loading]);
 
 
-    const openReportWindow = (q: string, a: string, s: any[], e?: string, ch?: any[], realId?: number) => {
+    const openReportWindow = (q: string, a: string, s: any[], e?: string, ch?: any[], realId?: number, visionData?: any) => {
         const reportId = realId ? realId.toString() : `JL-${new Date().getTime().toString().slice(-6)}`;
         sessionStorage.setItem("jonglaw_last_report", JSON.stringify({
             reportId,
@@ -79,7 +79,8 @@ export default function AIPanel() {
             answer: a,
             sources: s,
             engine: e,
-            chat_history: ch || []
+            chat_history: ch || [],
+            visionData: visionData || null
         }));
         window.open("/report", "_blank");
     };
@@ -385,10 +386,21 @@ export default function AIPanel() {
                                 {msg.role === "assistant" && (
                                     <div className="mt-4 pt-4 border-t border-white/10 flex items-center justify-between">
                                         {(msg as any).intent === "VISION_ANALYSIS" ? (
-                                            <div className="flex items-center gap-2 text-[10px] font-bold text-muted uppercase">
-                                                <Scale size={14} className="text-primary" />
-                                                Vision-Driven Analysis
-                                            </div>
+                                            <button
+                                                onClick={() => openReportWindow(
+                                                    messages[idx - 1]?.content || "협약서/계약서 분석",
+                                                    msg.content,
+                                                    [],
+                                                    msg.engine,
+                                                    [],
+                                                    undefined,
+                                                    (msg as any).visionData
+                                                )}
+                                                className="flex items-center gap-2 bg-primary text-white text-[10px] font-black px-4 py-2.5 rounded-xl transition-all shadow-lg shadow-primary/20 hover:scale-[1.05] active:scale-[0.95] w-fit uppercase"
+                                            >
+                                                <FileText size={14} />
+                                                보고서 열기 (새 창)
+                                            </button>
                                         ) : msg.intent === "REPORT" ? (
                                             <button
                                                 onClick={() => openReportWindow(
@@ -411,7 +423,7 @@ export default function AIPanel() {
 
                                         <div className="flex items-center gap-1.5 text-[9px] font-bold text-muted uppercase tracking-tighter">
                                             <Clock size={10} />
-                                            {msg.intent === "REPORT" ? "Legal Analysis" : "Chat Response"}
+                                            {msg.intent === "REPORT" ? "Legal Analysis" : (msg as any).intent === "VISION_ANALYSIS" ? "Contract Analysis" : "Chat Response"}
                                         </div>
                                     </div>
                                 )}

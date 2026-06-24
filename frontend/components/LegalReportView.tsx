@@ -26,9 +26,10 @@ interface LegalReportViewProps {
     sources: Source[];
     engine?: string;
     chat_history?: ChatMessage[];
+    visionData?: any;
 }
 
-export default function LegalReportView({ reportId, query, answer, sources, engine, chat_history = [] }: LegalReportViewProps) {
+export default function LegalReportView({ reportId, query, answer, sources, engine, chat_history = [], visionData }: LegalReportViewProps) {
     const [mounted, setMounted] = useState(false);
     const router = useRouter();
     const { user } = useAuth();
@@ -48,14 +49,16 @@ export default function LegalReportView({ reportId, query, answer, sources, engi
         const dateStr = now.getFullYear().toString().slice(-2) +
             (now.getMonth() + 1).toString().padStart(2, '0') +
             now.getDate().toString().padStart(2, '0');
-        const reportTitle = `${dateStr} 법률보고서(${reportId})`;
+        const reportTitle = visionData 
+            ? `${dateStr} 계약서분석보고서(${reportId})` 
+            : `${dateStr} 법률보고서(${reportId})`;
         const originalTitle = document.title;
         document.title = reportTitle;
 
         return () => {
             document.title = originalTitle;
         };
-    }, [user, reportId]);
+    }, [user, reportId, visionData]);
 
     const fetchSubscriptions = async () => {
         try {
@@ -230,7 +233,9 @@ export default function LegalReportView({ reportId, query, answer, sources, engi
                                             <span className="text-[10px] font-bold text-blue-500 uppercase tracking-widest mt-1">Professional Legal Engine</span>
                                         </div>
                                     </div>
-                                    <h1 className="text-3xl md:text-5xl font-black text-slate-900 tracking-tight leading-tight uppercase">Legal Consultation Report</h1>
+                                    <h1 className="text-3xl md:text-5xl font-black text-slate-900 tracking-tight leading-tight uppercase">
+                                        {visionData ? "Contract Audit Report" : "Legal Consultation Report"}
+                                    </h1>
                                     <div className="flex items-center gap-3 text-sm text-slate-400 font-mono italic">
                                         <span>#{reportId}</span>
                                         <span className="w-1 h-1 bg-slate-200 rounded-full"></span>
@@ -255,152 +260,290 @@ export default function LegalReportView({ reportId, query, answer, sources, engi
                                 </div>
                             </div>
 
-                            {/* Query Section */}
-                            <section className="space-y-6">
-                                <div className="inline-flex items-center gap-2 px-3 py-1 bg-slate-100 rounded-lg text-slate-500 font-bold text-[11px] tracking-wider uppercase">
-                                    <HelpCircle size={14} className="text-slate-400" />
-                                    Client Inquiry
-                                </div>
-                                <div className="relative p-6 md:p-10 bg-white border-2 border-slate-100 rounded-[1.5rem] md:rounded-[2.5rem] shadow-sm">
-                                    <div className="absolute top-8 left-8 text-slate-100 select-none hidden md:block">
-                                        <Scale size={64} />
+                            {/* Query Section (Only for general consultations or if query is meaningful) */}
+                            {!visionData && (
+                                <section className="space-y-6">
+                                    <div className="inline-flex items-center gap-2 px-3 py-1 bg-slate-100 rounded-lg text-slate-500 font-bold text-[11px] tracking-wider uppercase">
+                                        <HelpCircle size={14} className="text-slate-400" />
+                                        Client Inquiry
                                     </div>
-                                    <div className="relative text-lg md:text-xl text-slate-700 leading-relaxed font-semibold italic md:indent-6 whitespace-pre-wrap">
-                                        "{query}"
+                                    <div className="relative p-6 md:p-10 bg-white border-2 border-slate-100 rounded-[1.5rem] md:rounded-[2.5rem] shadow-sm">
+                                        <div className="absolute top-8 left-8 text-slate-100 select-none hidden md:block">
+                                            <Scale size={64} />
+                                        </div>
+                                        <div className="relative text-lg md:text-xl text-slate-700 leading-relaxed font-semibold italic md:indent-6 whitespace-pre-wrap">
+                                            "{query}"
+                                        </div>
                                     </div>
-                                </div>
-                            </section>
+                                </section>
+                            )}
 
-                            {/* Opinion Section */}
-                            <section className="space-y-12">
-                                <div className="inline-flex items-center gap-2 px-3 py-1 bg-blue-50 rounded-lg text-blue-600 font-bold text-[11px] tracking-wider uppercase">
-                                    <Zap size={14} className="text-blue-500 animate-pulse" />
-                                    Legal Opinion
-                                </div>
-
-                                <div className="space-y-20">
-                                    {/* 1. Overview */}
-                                    {sections.overview && (
-                                        <div className="group space-y-6">
-                                            <div className="flex items-center gap-4 border-l-8 border-slate-900 pl-6">
-                                                <span className="text-lg font-black text-slate-300">01</span>
-                                                <h3 className="text-2xl font-black text-slate-900 uppercase tracking-tight">사건 개요</h3>
-                                            </div>
-                                            <div className="text-slate-700 pl-0 md:pl-14 text-base md:text-lg">
-                                                {renderContent(sections.overview)}
-                                            </div>
+                            {visionData ? (
+                                <div className="space-y-16">
+                                    {/* 1. Document Info & Risk Assessment */}
+                                    <section className="space-y-6">
+                                        <div className="inline-flex items-center gap-2 px-3 py-1 bg-slate-100 rounded-lg text-slate-500 font-bold text-[11px] tracking-wider uppercase">
+                                            <Info size={14} className="text-slate-400" />
+                                            Document Profile & Risk Assessment
                                         </div>
-                                    )}
-
-                                    {/* 2. Analysis */}
-                                    {sections.analysis && (
-                                        <div className="group space-y-6">
-                                            <div className="flex items-center gap-4 border-l-8 border-slate-900 pl-6">
-                                                <span className="text-lg font-black text-slate-300">02</span>
-                                                <h3 className="text-2xl font-black text-slate-900 uppercase tracking-tight">법률 분석</h3>
-                                            </div>
-                                            <div className="text-slate-700 pl-0 md:pl-14 text-base md:text-lg">
-                                                {renderContent(sections.analysis)}
-                                            </div>
-                                        </div>
-                                    )}
-
-                                    {/* 3. Conclusion */}
-                                    {sections.conclusion && (
-                                        <div className="group space-y-6">
-                                            <div className="flex items-center gap-4 border-l-8 border-blue-600 pl-6">
-                                                <span className="text-lg font-black text-blue-400">03</span>
-                                                <h3 className="text-2xl font-black text-blue-600 uppercase tracking-tight">핵심 결론</h3>
-                                            </div>
-                                            <div className="ml-0 md:ml-14 relative">
-                                                <div className="relative bg-blue-50/50 shadow-sm border border-blue-100 p-8 md:p-12 rounded-[1.5rem] md:rounded-[2.5rem] text-slate-900 text-lg md:text-xl font-medium leading-relaxed">
-                                                    {renderContent(sections.conclusion)}
+                                        
+                                        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                                            <div className="p-6 bg-white border border-slate-100 rounded-2xl shadow-sm">
+                                                <span className="text-xs font-bold text-slate-400 uppercase tracking-wider block mb-2">문서 종류 (Document Type)</span>
+                                                <div className="text-xl font-extrabold text-slate-800 flex items-center gap-2">
+                                                    <BookOpen className="text-blue-500 w-5 h-5" />
+                                                    {visionData.document_type || "분석된 계약서"}
                                                 </div>
                                             </div>
-                                        </div>
-                                    )}
 
-                                    {/* 4. Steps */}
-                                    {sections.action && (
-                                        <div className="group space-y-6">
-                                            <div className="flex items-center gap-4 border-l-8 border-emerald-600 pl-6">
-                                                <span className="text-lg font-black text-emerald-400">04</span>
-                                                <h3 className="text-2xl font-black text-emerald-600 uppercase tracking-tight">향후 조치</h3>
-                                            </div>
-                                            <div className="text-slate-700 pl-0 md:pl-14 text-base md:text-lg">
-                                                {renderContent(sections.action)}
-                                            </div>
-                                        </div>
-                                    )}
-
-                                    {/* Sources & Subscription Section */}
-                                    {sources && sources.length > 0 && (
-                                        <section className="space-y-6">
-                                            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-                                                <div className="inline-flex items-center gap-2 px-3 py-1 bg-slate-100 rounded-lg text-slate-500 font-bold text-[11px] tracking-wider uppercase">
-                                                    <BookOpen size={14} className="text-slate-400" />
-                                                    Relevant Laws & Sources
-                                                </div>
-                                                <div className="flex items-center gap-2 text-[10px] text-blue-500 font-bold bg-blue-50 px-3 py-1 rounded-full animate-pulse">
-                                                    <Info size={12} /> 'Watch'를 눌러 개정 정보를 알림받으세요.
-                                                </div>
-                                            </div>
-                                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                                                {sources.map((src, idx) => {
-                                                    const sourceName = src.source || "";
-                                                    const isLaw = src.type === "law" || (sourceName && (
-                                                        sourceName.endsWith("법") ||
-                                                        sourceName.endsWith("령") ||
-                                                        sourceName.endsWith("규칙") ||
-                                                        sourceName.endsWith("률") ||
-                                                        sourceName.includes("법 [") || // Matches "민법 [제750조]"
-                                                        sourceName.includes("령 [")
-                                                    ));
-
-                                                    // Clean law name for subscription (remove article parts)
-                                                    const cleanLawName = sourceName.split(" [")[0].trim();
-                                                    const isSubscribed = subscribedLaws.includes(cleanLawName);
-                                                    const isSubmitting = submittingLaw === cleanLawName;
-
-                                                    return (
-                                                        <div key={idx} className="p-4 bg-white border border-slate-100 rounded-2xl flex items-center justify-between group hover:border-blue-200 transition-all shadow-sm">
-                                                            <div className="flex items-center gap-3">
-                                                                <div className={`p-2 rounded-lg ${isLaw ? "bg-blue-50 text-blue-500" : "bg-slate-50 text-slate-400"}`}>
-                                                                    <Scale size={18} />
-                                                                </div>
-                                                                <div className="flex flex-col">
-                                                                    <span className="text-sm font-bold text-slate-800 tracking-tight">{src.source}</span>
-                                                                    <span className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">{isLaw ? "Statute" : "Document"}</span>
-                                                                </div>
-                                                            </div>
-                                                            {isLaw && user && (
-                                                                <button
-                                                                    aria-label={`${cleanLawName} 법령 구독 ${isSubscribed ? "취소" : "설정"}`}
-                                                                    onClick={() => toggleSubscription(cleanLawName)}
-                                                                    disabled={isSubmitting}
-                                                                    className={`p-2 rounded-xl transition-all flex items-center gap-2 text-[10px] font-black uppercase tracking-widest ${isSubscribed
-                                                                        ? "bg-blue-50 text-blue-600 border border-blue-100"
-                                                                        : "bg-slate-50 text-slate-400 border border-transparent hover:bg-blue-50 hover:text-blue-500"
-                                                                        }`}
-                                                                >
-                                                                    {isSubmitting ? (
-                                                                        <Loader2 size={14} className="animate-spin" aria-hidden="true" />
-                                                                    ) : isSubscribed ? (
-                                                                        <BookmarkCheck size={14} aria-hidden="true" />
-                                                                    ) : (
-                                                                        <BookmarkPlus size={14} aria-hidden="true" />
-                                                                    )}
-                                                                    {isSubscribed ? "Subscribed" : "Watch"}
-                                                                </button>
-                                                            )}
+                                            <div className="p-6 bg-white border border-slate-100 rounded-2xl shadow-sm md:col-span-2">
+                                                <span className="text-xs font-bold text-slate-400 uppercase tracking-wider block mb-2">위험도 진단 (Risk Assessment)</span>
+                                                <div className="flex flex-col sm:flex-row sm:items-center gap-4">
+                                                    <div className={`px-4 py-2 rounded-xl text-center font-black text-lg shrink-0 border ${
+                                                        visionData.risk_level === '고' ? 'bg-red-50 text-red-600 border-red-200' :
+                                                        visionData.risk_level === '중' ? 'bg-orange-50 text-orange-600 border-orange-200' :
+                                                        'bg-green-50 text-green-600 border-green-200'
+                                                    }`}>
+                                                        등급: {visionData.risk_level || '미정'}
+                                                    </div>
+                                                    
+                                                    <div className="flex-1 space-y-1">
+                                                        <div className="flex justify-between text-[10px] font-black text-slate-400 px-1 uppercase tracking-widest">
+                                                            <span>LOW</span>
+                                                            <span>MEDIUM</span>
+                                                            <span>HIGH</span>
                                                         </div>
-                                                    );
-                                                })}
+                                                        <div className="h-3 w-full bg-slate-100 rounded-full overflow-hidden flex p-[2px] border border-slate-200/50">
+                                                            <div className={`h-full rounded-full transition-all duration-1000 ${
+                                                                visionData.risk_level === '고' ? 'w-full bg-gradient-to-r from-green-500 via-orange-500 to-red-500' :
+                                                                visionData.risk_level === '중' ? 'w-[66%] bg-gradient-to-r from-green-500 to-orange-500' :
+                                                                'w-[33%] bg-green-500'
+                                                            }`} />
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </section>
+
+                                    {/* 2. Toxic Clauses Analysis */}
+                                    {visionData.toxic_clauses && visionData.toxic_clauses.length > 0 && (
+                                        <section className="space-y-6">
+                                            <div className="inline-flex items-center gap-2 px-3 py-1 bg-red-50 rounded-lg text-red-600 font-bold text-[11px] tracking-wider uppercase">
+                                                <AlertCircle size={14} className="text-red-500" />
+                                                독소 조항 상세 분석 (Toxic Clauses)
+                                            </div>
+                                            
+                                            <div className="space-y-6">
+                                                {visionData.toxic_clauses.map((clauseItem: any, idx: number) => (
+                                                    <div key={idx} className="bg-white border border-slate-100 rounded-2xl p-6 md:p-8 shadow-sm space-y-4 print:break-inside-avoid">
+                                                        <div className="flex items-center gap-2 pb-3 border-b border-slate-100">
+                                                            <span className="w-6 h-6 bg-red-50 text-red-600 rounded-full flex items-center justify-center font-bold text-xs">
+                                                                {idx + 1}
+                                                            </span>
+                                                            <h4 className="font-extrabold text-slate-800 text-sm md:text-base">발견된 독소/리스크 조항</h4>
+                                                        </div>
+                                                        
+                                                        <div className="p-4 bg-slate-50 border-l-4 border-slate-300 rounded-r-xl">
+                                                            <p className="text-sm md:text-base font-serif italic text-slate-600 leading-relaxed break-keep">
+                                                                "{clauseItem.clause}"
+                                                            </p>
+                                                        </div>
+                                                        
+                                                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2">
+                                                            <div className="space-y-1">
+                                                                <span className="text-[11px] font-black text-red-500 uppercase tracking-widest block">위험 사유 (Risk Analysis)</span>
+                                                                <p className="text-xs md:text-sm text-slate-600 leading-relaxed break-keep">
+                                                                    {clauseItem.reason}
+                                                                </p>
+                                                            </div>
+                                                            <div className="space-y-1">
+                                                                <span className="text-[11px] font-black text-green-600 uppercase tracking-widest block">추천 수정안 (Revision Suggestion)</span>
+                                                                <p className="text-xs md:text-sm text-slate-700 font-bold leading-relaxed break-keep">
+                                                                    {clauseItem.suggestion}
+                                                                </p>
+                                                            </div>
+                                                        </div>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        </section>
+                                    )}
+
+                                    {/* 3. Missing Required Provisions */}
+                                    {visionData.missing_items && visionData.missing_items.length > 0 && (
+                                        <section className="space-y-6">
+                                            <div className="inline-flex items-center gap-2 px-3 py-1 bg-orange-50 rounded-lg text-orange-600 font-bold text-[11px] tracking-wider uppercase">
+                                                <AlertCircle size={14} className="text-orange-500" />
+                                                누락된 필수 항목 (Missing Provisions)
+                                            </div>
+                                            
+                                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                                {visionData.missing_items.map((item: string, idx: number) => (
+                                                    <div key={idx} className="p-4 bg-white border border-slate-100 rounded-2xl flex items-start gap-3 shadow-sm print:break-inside-avoid">
+                                                        <div className="w-5 h-5 bg-orange-50 text-orange-500 rounded-lg flex items-center justify-center shrink-0 mt-0.5">
+                                                            <span className="font-bold text-xs">!</span>
+                                                        </div>
+                                                        <div className="flex flex-col">
+                                                            <span className="text-[10px] font-bold text-orange-500 uppercase tracking-wider">Missing Item {idx + 1}</span>
+                                                            <span className="text-sm font-semibold text-slate-800 leading-relaxed mt-0.5">{item}</span>
+                                                        </div>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        </section>
+                                    )}
+
+                                    {/* 4. Overall Counsel Opinion */}
+                                    {visionData.overall_opinion && (
+                                        <section className="space-y-6">
+                                            <div className="inline-flex items-center gap-2 px-3 py-1 bg-blue-50 rounded-lg text-blue-600 font-bold text-[11px] tracking-wider uppercase">
+                                                <Zap size={14} className="text-blue-500 animate-pulse" />
+                                                변호사 종합 의견 (Overall Opinion)
+                                            </div>
+                                            
+                                            <div className="relative bg-gradient-to-br from-blue-50/30 to-indigo-50/20 border border-blue-100 p-8 md:p-12 rounded-[1.5rem] md:rounded-[2.5rem] shadow-sm print:break-inside-avoid">
+                                                <div className="absolute top-6 left-6 text-blue-500/10 pointer-events-none select-none">
+                                                    <Scale size={80} />
+                                                </div>
+                                                <div className="relative text-base md:text-lg text-slate-700 leading-relaxed font-serif break-keep whitespace-pre-wrap">
+                                                    {visionData.overall_opinion}
+                                                </div>
                                             </div>
                                         </section>
                                     )}
                                 </div>
-                            </section>
+                            ) : (
+                                <section className="space-y-12">
+                                    <div className="inline-flex items-center gap-2 px-3 py-1 bg-blue-50 rounded-lg text-blue-600 font-bold text-[11px] tracking-wider uppercase">
+                                        <Zap size={14} className="text-blue-500 animate-pulse" />
+                                        Legal Opinion
+                                    </div>
+
+                                    <div className="space-y-20">
+                                        {/* 1. Overview */}
+                                        {sections.overview && (
+                                            <div className="group space-y-6">
+                                                <div className="flex items-center gap-4 border-l-8 border-slate-900 pl-6">
+                                                    <span className="text-lg font-black text-slate-300">01</span>
+                                                    <h3 className="text-2xl font-black text-slate-900 uppercase tracking-tight">사건 개요</h3>
+                                                </div>
+                                                <div className="text-slate-700 pl-0 md:pl-14 text-base md:text-lg">
+                                                    {renderContent(sections.overview)}
+                                                </div>
+                                            </div>
+                                        )}
+
+                                        {/* 2. Analysis */}
+                                        {sections.analysis && (
+                                            <div className="group space-y-6">
+                                                <div className="flex items-center gap-4 border-l-8 border-slate-900 pl-6">
+                                                    <span className="text-lg font-black text-slate-300">02</span>
+                                                    <h3 className="text-2xl font-black text-slate-900 uppercase tracking-tight">법률 분석</h3>
+                                                </div>
+                                                <div className="text-slate-700 pl-0 md:pl-14 text-base md:text-lg">
+                                                    {renderContent(sections.analysis)}
+                                                </div>
+                                            </div>
+                                        )}
+
+                                        {/* 3. Conclusion */}
+                                        {sections.conclusion && (
+                                            <div className="group space-y-6">
+                                                <div className="flex items-center gap-4 border-l-8 border-blue-600 pl-6">
+                                                    <span className="text-lg font-black text-blue-400">03</span>
+                                                    <h3 className="text-2xl font-black text-blue-600 uppercase tracking-tight">핵심 결론</h3>
+                                                </div>
+                                                <div className="ml-0 md:ml-14 relative">
+                                                    <div className="relative bg-blue-50/50 shadow-sm border border-blue-100 p-8 md:p-12 rounded-[1.5rem] md:rounded-[2.5rem] text-slate-900 text-lg md:text-xl font-medium leading-relaxed">
+                                                        {renderContent(sections.conclusion)}
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        )}
+
+                                        {/* 4. Steps */}
+                                        {sections.action && (
+                                            <div className="group space-y-6">
+                                                <div className="flex items-center gap-4 border-l-8 border-emerald-600 pl-6">
+                                                    <span className="text-lg font-black text-emerald-400">04</span>
+                                                    <h3 className="text-2xl font-black text-emerald-600 uppercase tracking-tight">향후 조치</h3>
+                                                </div>
+                                                <div className="text-slate-700 pl-0 md:pl-14 text-base md:text-lg">
+                                                    {renderContent(sections.action)}
+                                                </div>
+                                            </div>
+                                        )}
+
+                                        {/* Sources & Subscription Section */}
+                                        {sources && sources.length > 0 && (
+                                            <section className="space-y-6">
+                                                <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+                                                    <div className="inline-flex items-center gap-2 px-3 py-1 bg-slate-100 rounded-lg text-slate-500 font-bold text-[11px] tracking-wider uppercase">
+                                                        <BookOpen size={14} className="text-slate-400" />
+                                                        Relevant Laws & Sources
+                                                    </div>
+                                                    <div className="flex items-center gap-2 text-[10px] text-blue-500 font-bold bg-blue-50 px-3 py-1 rounded-full animate-pulse">
+                                                        <Info size={12} /> 'Watch'를 눌러 개정 정보를 알림받으세요.
+                                                    </div>
+                                                </div>
+                                                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                                    {sources.map((src, idx) => {
+                                                        const sourceName = src.source || "";
+                                                        const isLaw = src.type === "law" || (sourceName && (
+                                                            sourceName.endsWith("법") ||
+                                                            sourceName.endsWith("령") ||
+                                                            sourceName.endsWith("규칙") ||
+                                                            sourceName.endsWith("률") ||
+                                                            sourceName.includes("법 [") || // Matches "민법 [제750조]"
+                                                            sourceName.includes("령 [")
+                                                        ));
+
+                                                        // Clean law name for subscription (remove article parts)
+                                                        const cleanLawName = sourceName.split(" [")[0].trim();
+                                                        const isSubscribed = subscribedLaws.includes(cleanLawName);
+                                                        const isSubmitting = submittingLaw === cleanLawName;
+
+                                                        return (
+                                                            <div key={idx} className="p-4 bg-white border border-slate-100 rounded-2xl flex items-center justify-between group hover:border-blue-200 transition-all shadow-sm">
+                                                                <div className="flex items-center gap-3">
+                                                                    <div className={`p-2 rounded-lg ${isLaw ? "bg-blue-50 text-blue-500" : "bg-slate-50 text-slate-400"}`}>
+                                                                        <Scale size={18} />
+                                                                    </div>
+                                                                    <div className="flex flex-col">
+                                                                        <span className="text-sm font-bold text-slate-800 tracking-tight">{src.source}</span>
+                                                                        <span className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">{isLaw ? "Statute" : "Document"}</span>
+                                                                    </div>
+                                                                </div>
+                                                                {isLaw && user && (
+                                                                    <button
+                                                                        aria-label={`${cleanLawName} 법령 구독 ${isSubscribed ? "취소" : "설정"}`}
+                                                                        onClick={() => toggleSubscription(cleanLawName)}
+                                                                        disabled={isSubmitting}
+                                                                        className={`p-2 rounded-xl transition-all flex items-center gap-2 text-[10px] font-black uppercase tracking-widest ${isSubscribed
+                                                                            ? "bg-blue-50 text-blue-600 border border-blue-100"
+                                                                            : "bg-slate-50 text-slate-400 border border-transparent hover:bg-blue-50 hover:text-blue-500"
+                                                                            }`}
+                                                                    >
+                                                                        {isSubmitting ? (
+                                                                            <Loader2 size={14} className="animate-spin" aria-hidden="true" />
+                                                                        ) : isSubscribed ? (
+                                                                            <BookmarkCheck size={14} aria-hidden="true" />
+                                                                        ) : (
+                                                                            <BookmarkPlus size={14} aria-hidden="true" />
+                                                                        )}
+                                                                        {isSubscribed ? "Subscribed" : "Watch"}
+                                                                    </button>
+                                                                )}
+                                                            </div>
+                                                        );
+                                                    })}
+                                                </div>
+                                            </section>
+                                        )}
+                                    </div>
+                                </section>
+                            )}
 
                             <div className="flex flex-col items-center gap-6 pt-20 border-t border-slate-100 opacity-40 select-none pb-12">
                                 <div className="flex items-center gap-3 text-slate-400 grayscale">
