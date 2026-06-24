@@ -48,7 +48,7 @@ class RAGEngine:
             print("Supabase client NOT initialized due to missing credentials.")
 
         self.chat_llm = ChatGoogleGenerativeAI(
-            model="gemini-2.5-flash", 
+            model="gemini-3.5-flash", 
             temperature=0.7,
             google_api_key=GOOGLE_API_KEY
         )
@@ -484,7 +484,7 @@ class VisionEngine:
     def __init__(self):
         # Using gemini-2.5-flash which supports multimodal
         self.vision_llm = ChatGoogleGenerativeAI(
-            model="gemini-2.5-flash", 
+            model="gemini-3.5-flash", 
             temperature=0,
             google_api_key=GOOGLE_API_KEY
         )
@@ -550,10 +550,21 @@ class VisionEngine:
                 "detail": str(e)
             }
 
-    def _normalize_json_content(self, content: str) -> str:
+    def _normalize_json_content(self, content: Any) -> str:
         """
         Extract JSON block from LLM response if present.
         """
+        if isinstance(content, list):
+            text_parts = []
+            for part in content:
+                if isinstance(part, str):
+                    text_parts.append(part)
+                elif isinstance(part, dict):
+                    text_parts.append(part.get("text", str(part)))
+                else:
+                    text_parts.append(str(part))
+            content = "".join(text_parts)
+
         if "```json" in content:
             content = content.split("```json")[1].split("```")[0].strip()
         elif "```" in content:

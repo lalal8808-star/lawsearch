@@ -285,20 +285,44 @@ async def analyze_document(
 ):
     valid_image_types = ["image/jpeg", "image/png", "image/jpg", "image/webp"]
     
-    content = await file.read()
-    if len(content) > MAX_FILE_SIZE:
-        raise HTTPException(status_code=413, detail="File too large. Maximum size is 10MB.")
-        
-    if file.content_type in valid_image_types:
-        result = await vision_engine.analyze_contract_document(image_bytes=content, user_description=description)
-        return result
-    elif file.content_type == "application/pdf" or file.filename.lower().endswith(".pdf"):
-        docs = document_processor.process_pdf(content, file.filename)
-        full_text = "\n".join([doc.page_content for doc in docs])
-        result = await vision_engine.analyze_contract_document(text_content=full_text, user_description=description)
-        return result
-    else:
-        raise HTTPException(status_code=400, detail="Only image or PDF files are supported")
+    try:
+        content = await file.read()
+        if len(content) > MAX_FILE_SIZE:
+            raise HTTPException(status_code=413, detail="File too large. Maximum size is 10MB.")
+            
+        if file.content_type in valid_image_types:
+            result = await vision_engine.analyze_contract_document(image_bytes=content, user_description=description)
+            if "error" in result:
+                raise HTTPException(status_code=400, detail=result["error"])
+            return result
+        elif file.content_type == "application/pdf" or file.filename.lower().endswith(".pdf"):
+            try:
+                docs = document_processor.process_pdf(content, file.filename)
+            except Exception as pdf_err:
+                logger.error(f"PDF processing error: {pdf_err}")
+                raise HTTPException(
+                    status_code=400, 
+                    detail="PDF 파일의 텍스트를 추출하는 데 실패했습니다. 파일이 손상되었거나 보안이 설정되어 있을 수 있습니다."
+                )
+            
+            full_text = "\n".join([doc.page_content for doc in docs]).strip()
+            if not full_text:
+                raise HTTPException(
+                    status_code=400, 
+                    detail="PDF 파일에서 텍스트를 추출할 수 없습니다. 스캔본이나 이미지 형태의 PDF일 수 있으니, 이미지 형식(JPG, PNG)으로 변환 후 업로드해 주세요."
+                )
+                
+            result = await vision_engine.analyze_contract_document(text_content=full_text, user_description=description)
+            if "error" in result:
+                raise HTTPException(status_code=400, detail=result["error"])
+            return result
+        else:
+            raise HTTPException(status_code=400, detail="Only image or PDF files are supported")
+    except HTTPException as he:
+        raise he
+    except Exception as e:
+        logger.error(f"Unexpected document analysis error: {e}")
+        raise HTTPException(status_code=500, detail=f"문서 분석 중 서버 내부 예외가 발생했습니다: {str(e)}")
 
 @app.post("/query")
 @limiter.limit("30/minute")

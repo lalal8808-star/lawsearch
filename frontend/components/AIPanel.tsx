@@ -122,7 +122,7 @@ export default function AIPanel() {
                     content: "이미지 분석 결과입니다.",
                     visionData: res.data,
                     intent: "VISION_ANALYSIS",
-                    engine: "gemini-2.0-flash-lite"
+                    engine: "gemini-3.5-flash"
                 };
                 setMessages((prev) => [...prev, assistantMsg]);
                 setSelectedImage(null); // Clear after send
