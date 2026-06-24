@@ -425,6 +425,110 @@ async def query_ai(
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.get("/query-context")
+async def query_context(
+    query: str,
+    current_user: Optional[User] = Depends(auth.get_current_user_optional)
+):
+    try:
+        required_laws = await rag_engine.detect_required_laws(query)
+        if required_laws:
+            synced_sources = rag_engine._get_synced_sources()
+            for law_name in required_laws:
+                is_synced = any(law_name in s or s in law_name for s in synced_sources)
+                if not is_synced:
+                    try:
+                        search_results = await law_client.search_laws(law_name)
+                        law_list = search_results.get("law", [])
+                        if isinstance(law_list, dict): law_list = [law_list]
+                        best_match = None
+                        if law_list:
+                            for l in law_list:
+                                if l.get("법령명한글") == law_name:
+                                    best_match = l
+                                    break
+                            if not best_match: best_match = law_list[0]
+                        if best_match:
+                            mst = best_match.get("법령일련번호")
+                            law_data = await law_client.get_law_detail(mst)
+                            if law_data:
+                                docs = document_processor.process_law_xml(law_data, mst)
+                                if docs:
+                                    rag_engine.delete_documents_by_mst(mst)
+                                    await rag_engine.add_documents(docs)
+                    except Exception as sync_e:
+                        print(f"Warning: Auto-sync failed for law {law_name}: {sync_e}")
+
+        # 2. Autonomous Precedent Syncing
+        try:
+            prec_search = await law_client.search_precedents(query)
+            prec_list = prec_search.get("prec", [])
+            if isinstance(prec_list, dict): prec_list = [prec_list]
+            synced_msts = rag_engine.get_synced_msts()
+            for prec_item in prec_list[:3]:
+                prec_id = prec_item.get("판례일련번호")
+                if prec_id and str(prec_id) not in synced_msts:
+                    prec_detail = await law_client.get_precedent_detail(prec_id)
+                    if prec_detail:
+                        docs = document_processor.process_precedent_xml(prec_detail, prec_id)
+                        if docs:
+                            await rag_engine.add_documents(docs)
+        except Exception as prec_sync_e:
+            print(f"Warning: Precedent auto-sync failed: {prec_sync_e}")
+
+        # 3. Retrieve context and sources from RAGEngine
+        intent = await rag_engine.detect_intent(query)
+        docs = []
+        if rag_engine.supabase_client:
+            user_id_str = str(current_user.id) if current_user else None
+            response = rag_engine.supabase_client.rpc(
+                "match_documents",
+                {
+                    "query_embedding": await rag_engine.embeddings.aembed_query(query),
+                    "match_threshold": 0.2,
+                    "match_count": 25
+                }
+            ).execute()
+            
+            for row in response.data:
+                content = row.get('content', '')
+                metadata = row.get('metadata', {})
+                is_upload_type = metadata.get("type") == "user_upload"
+                if is_upload_type and metadata.get("user_id") != user_id_str:
+                    continue
+                docs.append(Document(page_content=content, metadata=metadata))
+        
+        docs = docs[:15]
+        keywords = [k for k in re.split(r'\s+', query) if len(k) > 1]
+        for doc in docs:
+            doc.metadata['boost'] = sum(10 for kw in keywords if kw in doc.page_content)
+        docs = sorted(docs, key=lambda x: x.metadata.get('boost', 0), reverse=True)
+
+        context_parts = []
+        seen_contents = set()
+        sources_list = []
+        
+        for doc in docs:
+            content = doc.page_content.strip()
+            src = doc.metadata.get("source", "Unknown").strip()
+            src_type = doc.metadata.get("type", "unknown")
+            if content not in seen_contents:
+                context_parts.append(f"[{src}] {content}")
+                seen_contents.add(content)
+                if src not in [s['source'] for s in sources_list]:
+                    sources_list.append({"source": src, "type": src_type})
+
+        context = "\n\n".join(context_parts[:10])
+        
+        return {
+            "context": context,
+            "sources": sources_list,
+            "intent": intent
+        }
+    except Exception as e:
+        logger.error(f"Error in query-context: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 # --- History Endpoints ---
 
 @app.get("/history")

@@ -19,3 +19,4 @@ supabase
 cryptography
 slowapi
 fpdf2
+langchain-openai

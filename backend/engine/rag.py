@@ -3,7 +3,8 @@ import re
 import asyncio
 import base64
 from dotenv import load_dotenv
-from langchain_google_genai import GoogleGenerativeAIEmbeddings, ChatGoogleGenerativeAI
+from langchain_google_genai import GoogleGenerativeAIEmbeddings
+from langchain_openai import ChatOpenAI
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_core.documents import Document
 from langchain_core.messages import SystemMessage, HumanMessage
@@ -17,8 +18,14 @@ GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
 
+# OpenAI and AI Gateway Configuration
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY") or "mock-openai-key-not-set"
+AI_GATEWAY_URL = os.getenv("AI_GATEWAY_URL") or None
+
 if not GOOGLE_API_KEY:
     print("CRITICAL ERROR: GOOGLE_API_KEY is not set in environment variables!")
+if not OPENAI_API_KEY:
+    print("WARNING: OPENAI_API_KEY is not set. ChatGPT translation/analysis may not function.")
 if not SUPABASE_URL or not SUPABASE_KEY:
     print("WARNING: Supabase credentials not fully set. Vector store may not function.")
 
@@ -47,15 +54,17 @@ class RAGEngine:
         else:
             print("Supabase client NOT initialized due to missing credentials.")
 
-        self.chat_llm = ChatGoogleGenerativeAI(
-            model="gemini-3.5-flash", 
+        self.chat_llm = ChatOpenAI(
+            model="gpt-4o-mini", 
             temperature=0.7,
-            google_api_key=GOOGLE_API_KEY
+            api_key=OPENAI_API_KEY,
+            base_url=AI_GATEWAY_URL
         )
-        self.report_llm = ChatGoogleGenerativeAI(
-            model="gemini-3.1-pro-preview",
+        self.report_llm = ChatOpenAI(
+            model="gpt-4o",
             temperature=0,
-            google_api_key=GOOGLE_API_KEY
+            api_key=OPENAI_API_KEY,
+            base_url=AI_GATEWAY_URL
         )
         self._metadata_cache = None # Stores {'sources': set(), 'msts': set()}
 
@@ -482,11 +491,12 @@ class RAGEngine:
 
 class VisionEngine:
     def __init__(self):
-        # Using gemini-2.5-flash which supports multimodal
-        self.vision_llm = ChatGoogleGenerativeAI(
-            model="gemini-3.5-flash", 
+        # Using gpt-4o-mini which supports multimodal
+        self.vision_llm = ChatOpenAI(
+            model="gpt-4o-mini", 
             temperature=0,
-            google_api_key=GOOGLE_API_KEY
+            api_key=OPENAI_API_KEY,
+            base_url=AI_GATEWAY_URL
         )
 
     async def analyze_contract_document(self, image_bytes: Optional[bytes] = None, text_content: Optional[str] = None, user_description: str = "") -> Dict[str, Any]:

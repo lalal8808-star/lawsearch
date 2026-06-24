@@ -4,6 +4,7 @@ import { useState, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Send, Bot, User, Scale, BookOpen, FileText, Clock, X, ShieldCheck, AlertTriangle, FileSearch, CheckCircle2, AlertCircle } from "lucide-react";
 import api from "@/utils/api";
+import axios from "axios";
 import { useAuth } from "@/context/AuthContext";
 import ImageUpload from "./ImageUpload";
 
@@ -107,13 +108,14 @@ export default function AIPanel() {
         setAbortController(controller);
 
         try {
-            let res;
             if (selectedImage) {
                 const formData = new FormData();
                 formData.append("file", selectedImage);
                 if (currentQuery) formData.append("description", currentQuery);
 
-                res = await api.post(`/analyze-image`, formData, {
+                const token = localStorage.getItem("jonglaw_token");
+                const res = await axios.post(`/api/analyze`, formData, {
+                    headers: { Authorization: `Bearer ${token}` },
                     signal: controller.signal
                 });
 
@@ -122,30 +124,105 @@ export default function AIPanel() {
                     content: "이미지 분석 결과입니다.",
                     visionData: res.data,
                     intent: "VISION_ANALYSIS",
-                    engine: "gemini-3.5-flash"
+                    engine: "gpt-5.5"
                 };
                 setMessages((prev) => [...prev, assistantMsg]);
                 setSelectedImage(null); // Clear after send
             } else {
-                const formData = new FormData();
-                formData.append("query", currentQuery);
-                res = await api.post(`/query`, formData, {
+                const token = localStorage.getItem("jonglaw_token");
+                const response = await fetch('/api/chat', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${token}`
+                    },
+                    body: JSON.stringify({
+                        messages: [...messages, userMsg].map(m => ({ role: m.role, content: m.content }))
+                    }),
                     signal: controller.signal
                 });
 
-                const assistantMsg = {
-                    role: "assistant",
-                    content: res.data.answer,
-                    sources: res.data.sources,
-                    intent: res.data.intent,
-                    engine: res.data.engine
-                };
-                setMessages((prev) => [...prev, assistantMsg]);
+                if (!response.ok) {
+                    const errData = await response.json();
+                    throw new Error(errData.error || '채팅 응답에 실패했습니다.');
+                }
+
+                const reader = response.body?.getReader();
+                const decoder = new TextDecoder();
+                if (!reader) throw new Error('응답 스트림 리더를 생성할 수 없습니다.');
+
+                let assistantAnswer = '';
+                let sources: any[] = [];
+                let intent = 'CHAT';
+
+                // Append an empty assistant message for streaming
+                setMessages((prev) => [
+                    ...prev, 
+                    { role: "assistant", content: "", sources: [], intent: "CHAT", engine: "gpt-5.5" }
+                ]);
+
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+
+                    const chunk = decoder.decode(value);
+                    const lines = chunk.split('\n');
+                    
+                    for (const line of lines) {
+                        if (!line.trim()) continue;
+
+                        const colonIndex = line.indexOf(':');
+                        if (colonIndex === -1) continue;
+
+                        const type = line.slice(0, colonIndex);
+                        const content = line.slice(colonIndex + 1);
+
+                        if (type === '0') {
+                            try {
+                                const textVal = JSON.parse(content);
+                                assistantAnswer += textVal;
+                            } catch (e) {
+                                assistantAnswer += content.replace(/^"|"$/g, '');
+                            }
+                            
+                            setMessages((prev) => {
+                                const updated = [...prev];
+                                const last = updated[updated.length - 1];
+                                if (last && last.role === 'assistant') {
+                                    last.content = assistantAnswer;
+                                }
+                                return updated;
+                            });
+                        } else if (type === '8') {
+                            try {
+                                const annotation = JSON.parse(content);
+                                if (Array.isArray(annotation)) {
+                                    for (const item of annotation) {
+                                        if (item.type === 'metadata') {
+                                            sources = item.sources || [];
+                                            intent = item.intent || 'CHAT';
+                                            setMessages((prev) => {
+                                                const updated = [...prev];
+                                                const last = updated[updated.length - 1];
+                                                if (last && last.role === 'assistant') {
+                                                    last.sources = sources;
+                                                    last.intent = intent;
+                                                }
+                                                return updated;
+                                            });
+                                        }
+                                    }
+                                }
+                            } catch (e) {
+                                console.error('Annotation parse error:', e);
+                            }
+                        }
+                    }
+                }
 
                 // Auto open report only if intent is REPORT
-                if (res.data.intent === "REPORT") {
-                    openReportWindow(currentQuery, res.data.answer, res.data.sources, res.data.engine, res.data.chat_history, res.data.report_id);
-                    // Trigger history refresh
+                if (intent === "REPORT") {
+                    openReportWindow(currentQuery, assistantAnswer, sources, "gpt-5.5", [], undefined);
                     window.dispatchEvent(new CustomEvent('report-generated'));
                 }
             }
@@ -153,8 +230,8 @@ export default function AIPanel() {
         } catch (error: any) {
             if (error.name === 'CanceledError') return;
             console.error("AI Query Error:", error);
-            const detail = error.response?.data?.detail;
-            const message = typeof detail === "string" ? detail : (error.message || "서버 통신 중 오류가 발생했습니다.");
+            const detail = error.response?.data?.detail || error.message;
+            const message = typeof detail === "string" ? detail : "서버 통신 중 오류가 발생했습니다.";
             setMessages((prev) => [
                 ...prev,
                 { role: "assistant", content: `죄송합니다. 오류가 발생했습니다: ${message}` },
