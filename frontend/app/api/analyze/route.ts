@@ -132,9 +132,9 @@ export async function POST(req: Request) {
       });
     }
 
-    // 6. ChatGPT 5.5 분석 요청 실행
+    // 6. ChatGPT 4o 분석 요청 실행
     const { text } = await generateText({
-      model: openai('gpt-5.5'),
+      model: openai('gpt-4o'),
       messages,
       temperature: 0,
     });

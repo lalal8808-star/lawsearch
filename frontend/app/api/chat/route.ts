@@ -83,7 +83,7 @@ export async function POST(req: Request) {
     }
 
     const result = streamText({
-      model: openai('gpt-5.5'),
+      model: openai('gpt-4o'),
       system: systemInstruction,
       messages,
     });

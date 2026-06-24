@@ -98,10 +98,10 @@ export default function AIPanel() {
     };
 
     const handleSend = async () => {
-        if (!query.trim() || loading) return;
+        if ((!query.trim() && !selectedImage) || loading) return;
 
         setLoading(true);
-        const currentQuery = query;
+        const currentQuery = query.trim() || (selectedImage ? `${selectedImage.name} 분석 요청` : "");
         const userMsg = { role: "user", content: currentQuery };
         setMessages((prev) => [...prev, userMsg]);
         setQuery("");
@@ -112,7 +112,7 @@ export default function AIPanel() {
             if (selectedImage) {
                 const formData = new FormData();
                 formData.append("file", selectedImage);
-                if (currentQuery) formData.append("description", currentQuery);
+                if (query.trim()) formData.append("description", query.trim());
 
                 const token = localStorage.getItem("jonglaw_token");
                 const res = await axios.post(`/api/analyze`, formData, {
@@ -122,10 +122,10 @@ export default function AIPanel() {
 
                 const assistantMsg = {
                     role: "assistant",
-                    content: "이미지 분석 결과입니다.",
+                    content: `${selectedImage.name} 분석 결과입니다.`,
                     visionData: res.data,
                     intent: "VISION_ANALYSIS",
-                    engine: "gpt-5.5"
+                    engine: "gpt-4o"
                 };
                 setMessages((prev) => [...prev, assistantMsg]);
                 setSelectedImage(null); // Clear after send
@@ -159,7 +159,7 @@ export default function AIPanel() {
                 // Append an empty assistant message for streaming
                 setMessages((prev) => [
                     ...prev, 
-                    { role: "assistant", content: "", sources: [], intent: "CHAT", engine: "gpt-5.5" }
+                    { role: "assistant", content: "", sources: [], intent: "CHAT", engine: "gpt-4o" }
                 ]);
 
                 while (true) {
@@ -223,7 +223,7 @@ export default function AIPanel() {
 
                 // Auto open report only if intent is REPORT
                 if (intent === "REPORT") {
-                    openReportWindow(currentQuery, assistantAnswer, sources, "gpt-5.5", [], undefined);
+                    openReportWindow(currentQuery, assistantAnswer, sources, "gpt-4o", [], undefined);
                     window.dispatchEvent(new CustomEvent('report-generated'));
                 }
             }
