@@ -1,14 +1,22 @@
 import { createOpenAI } from '@ai-sdk/openai';
 import { generateText } from 'ai';
 import { createClient } from '@supabase/supabase-js';
-import pdf from 'pdf-parse';
+// @ts-ignore
+import pdf from 'pdf-parse/lib/pdf-parse.js';
 
 export async function POST(req: Request) {
-  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-  const supabase = createClient(supabaseUrl!, supabaseAnonKey!);
-
   try {
+    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+    const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+
+    if (!supabaseUrl || !supabaseAnonKey) {
+      return new Response(
+        JSON.stringify({ error: 'Supabase URL 또는 Anon Key가 서버 환경 변수에 설정되어 있지 않습니다.' }),
+        { status: 500, headers: { 'Content-Type': 'application/json' } }
+      );
+    }
+
+    const supabase = createClient(supabaseUrl, supabaseAnonKey);
     // 1. Supabase OIDC 인증 검증
     const authHeader = req.headers.get('Authorization');
     const token = authHeader?.split(' ')[1];

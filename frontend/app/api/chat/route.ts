@@ -3,11 +3,18 @@ import { streamText } from 'ai';
 import { createClient } from '@supabase/supabase-js';
 
 export async function POST(req: Request) {
-  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-  const supabase = createClient(supabaseUrl!, supabaseAnonKey!);
-
   try {
+    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+    const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+
+    if (!supabaseUrl || !supabaseAnonKey) {
+      return new Response(
+        JSON.stringify({ error: 'Supabase URL 또는 Anon Key가 서버 환경 변수에 설정되어 있지 않습니다.' }),
+        { status: 500, headers: { 'Content-Type': 'application/json' } }
+      );
+    }
+
+    const supabase = createClient(supabaseUrl, supabaseAnonKey);
     // 1. Supabase OIDC (JWT) Token Verification
     const authHeader = req.headers.get('Authorization');
     const token = authHeader?.split(' ')[1];
