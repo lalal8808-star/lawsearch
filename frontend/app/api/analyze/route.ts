@@ -1,7 +1,7 @@
 import { createOpenAI } from '@ai-sdk/openai';
 import { generateText } from 'ai';
 import { createClient } from '@supabase/supabase-js';
-import * as pdf from 'pdf-parse';
+import pdf from 'pdf-parse';
 
 export async function POST(req: Request) {
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -50,8 +50,8 @@ export async function POST(req: Request) {
     if (isPdf) {
       try {
         const buffer = await file.arrayBuffer();
-        const parser = new pdf.PDFParse(Buffer.from(buffer));
-        textContent = (await parser.getText()).text;
+        const parsedData = await pdf(Buffer.from(buffer));
+        textContent = parsedData.text;
       } catch (pdfErr: any) {
         console.error('PDF parsing error:', pdfErr);
         return new Response(
@@ -114,7 +114,7 @@ export async function POST(req: Request) {
         role: 'user',
         content: [
           { type: 'text', text: humanText },
-          { type: 'image', image: imageBuffer }
+          { type: 'image', image: imageBuffer, mediaType: file.type }
         ]
       });
     } else {

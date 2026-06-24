@@ -230,7 +230,7 @@ export default function AIPanel() {
         } catch (error: any) {
             if (error.name === 'CanceledError') return;
             console.error("AI Query Error:", error);
-            const detail = error.response?.data?.detail || error.message;
+            const detail = error.response?.data?.detail || error.response?.data?.error || error.message;
             const message = typeof detail === "string" ? detail : "서버 통신 중 오류가 발생했습니다.";
             setMessages((prev) => [
                 ...prev,

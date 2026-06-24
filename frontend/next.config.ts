@@ -14,6 +14,7 @@ const withPWA = withPWAInit({
 
 const nextConfig: NextConfig = {
   output: process.env.IS_DOCKER === 'true' ? 'standalone' : undefined,
+  serverExternalPackages: ['pdf-parse'],
 };
 
 export default withPWA(nextConfig);
