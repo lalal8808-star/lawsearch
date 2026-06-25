@@ -78,7 +78,7 @@ export async function POST(req: Request) {
 
     // 5. Vercel AI Gateway 경유 호출 (model 문자열만으로 자동 라우팅, 인증은 VERCEL_OIDC_TOKEN)
     const result = streamText({
-      model: 'openai/gpt-5.5',
+      model: 'openai/gpt-5-mini',
       system: systemInstruction,
       messages,
       onError({ error }) {

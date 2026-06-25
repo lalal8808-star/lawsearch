@@ -127,7 +127,7 @@ export async function POST(req: Request) {
 
     // 5. Vercel AI Gateway 경유 분석 요청 (인증은 VERCEL_OIDC_TOKEN 자동 처리)
     const { text } = await generateText({
-      model: 'openai/gpt-5.5',
+      model: 'openai/gpt-5-mini',
       messages,
       temperature: 0,
     });
