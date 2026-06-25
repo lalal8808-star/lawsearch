@@ -97,6 +97,22 @@ export default function AIPanel() {
         }
     };
 
+    const handle401Error = () => {
+        if (typeof window !== "undefined") {
+            localStorage.removeItem("jonglaw_token");
+            localStorage.removeItem("jonglaw_user");
+            localStorage.removeItem("jonglaw_nickname");
+            
+            const lastReload = sessionStorage.getItem("last_401_reload");
+            const now = Date.now();
+            if (!lastReload || now - parseInt(lastReload) > 10000) {
+                sessionStorage.setItem("last_401_reload", now.toString());
+                alert("인증 정보가 만료되었거나 유효하지 않습니다. 다시 로그인해 주세요.");
+                window.location.reload();
+            }
+        }
+    };
+
     const handleSend = async () => {
         if ((!query.trim() && !selectedImage) || loading) return;
 
@@ -144,6 +160,10 @@ export default function AIPanel() {
                 });
 
                 if (!response.ok) {
+                    if (response.status === 401) {
+                        handle401Error();
+                        return;
+                    }
                     const errData = await response.json();
                     throw new Error(errData.error || '채팅 응답에 실패했습니다.');
                 }
@@ -231,6 +251,12 @@ export default function AIPanel() {
         } catch (error: any) {
             if (error.name === 'CanceledError') return;
             console.error("AI Query Error:", error);
+            
+            if (error.response?.status === 401 || error.status === 401) {
+                handle401Error();
+                return;
+            }
+            
             const detail = error.response?.data?.detail || error.response?.data?.error || error.message;
             const message = typeof detail === "string" ? detail : "서버 통신 중 오류가 발생했습니다.";
             setMessages((prev) => [
