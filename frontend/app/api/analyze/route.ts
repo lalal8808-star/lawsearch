@@ -21,9 +21,9 @@ export async function POST(req: Request) {
     const authHeader = req.headers.get('Authorization');
     const token = authHeader?.split(' ')[1];
     
-    if (!token) {
+    if (!token || token === 'null' || token === 'undefined' || token.split('.').length !== 3) {
       return new Response(
-        JSON.stringify({ error: '인증 토큰이 누락되었습니다. 로그인이 필요합니다.' }),
+        JSON.stringify({ error: '유효하지 않은 인증 토큰입니다. 다시 로그인해 주세요.' }), 
         { status: 401, headers: { 'Content-Type': 'application/json' } }
       );
     }

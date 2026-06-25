@@ -130,9 +130,10 @@ export default function AIPanel() {
                 formData.append("file", selectedImage);
                 if (query.trim()) formData.append("description", query.trim());
 
-                const token = localStorage.getItem("jonglaw_token");
+                let token = localStorage.getItem("jonglaw_token");
+                if (token === "null" || token === "undefined") token = null;
                 const res = await axios.post(`/api/analyze`, formData, {
-                    headers: { Authorization: `Bearer ${token}` },
+                    headers: token ? { Authorization: `Bearer ${token}` } : {},
                     signal: controller.signal
                 });
 
@@ -146,12 +147,13 @@ export default function AIPanel() {
                 setMessages((prev) => [...prev, assistantMsg]);
                 setSelectedImage(null); // Clear after send
             } else {
-                const token = localStorage.getItem("jonglaw_token");
+                let token = localStorage.getItem("jonglaw_token");
+                if (token === "null" || token === "undefined") token = null;
                 const response = await fetch('/api/chat', {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
-                        'Authorization': `Bearer ${token}`
+                        ...(token ? { 'Authorization': `Bearer ${token}` } : {})
                     },
                     body: JSON.stringify({
                         messages: [...messages, userMsg].map(m => ({ role: m.role, content: m.content }))
@@ -161,6 +163,7 @@ export default function AIPanel() {
 
                 if (!response.ok) {
                     if (response.status === 401) {
+                        setMessages((prev) => prev.slice(0, -1)); // 401 오류 시 방금 추가된 빈 버블 제거
                         handle401Error();
                         return;
                     }
