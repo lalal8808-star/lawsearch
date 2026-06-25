@@ -127,4 +127,46 @@ class DocumentProcessor:
             metadata={"source": filename, "type": "user_upload"}
         )]
 
+    @staticmethod
+    def process_hwpx(file_content: bytes, filename: str) -> List[Document]:
+        """
+        Extract text from HWPX (Zip file containing XML sections) and convert to LangChain Documents.
+        """
+        import zipfile
+        import xml.etree.ElementTree as ET
+        
+        text_list = []
+        try:
+            with zipfile.ZipFile(io.BytesIO(file_content)) as z:
+                # Find all section xml files in HWPX
+                section_files = [f for f in z.namelist() if f.startswith("Contents/section") and f.endswith(".xml")]
+                section_files.sort()
+                
+                for section_file in section_files:
+                    xml_content = z.read(section_file)
+                    root = ET.fromstring(xml_content)
+                    # Extract elements ending with tag name 't' (e.g. <hp:t>)
+                    for elem in root.iter():
+                        if elem.tag.endswith('}t') or elem.tag == 't':
+                            if elem.text:
+                                text_list.append(elem.text)
+        except Exception as e:
+            # Fallback to regex text extraction if XML parser encounters namespace or structure issue
+            try:
+                with zipfile.ZipFile(io.BytesIO(file_content)) as z:
+                    for name in z.namelist():
+                        if name.startswith("Contents/section") and name.endswith(".xml"):
+                            xml_data = z.read(name).decode('utf-8', errors='ignore')
+                            import re
+                            texts = re.findall(r'<[^:>]*:?t[^>]*>(.*?)</[^:>]*:?t>', xml_data)
+                            text_list.extend(texts)
+            except Exception as fallback_e:
+                raise ValueError(f"HWPX 파싱에 실패했습니다: {str(fallback_e)}")
+                
+        text = "\n".join(text_list)
+        return [Document(
+            page_content=text,
+            metadata={"source": filename, "type": "user_upload"}
+        )]
+
 document_processor = DocumentProcessor()

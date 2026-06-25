@@ -59,7 +59,11 @@ export default function UploadSection() {
 
         if (e.dataTransfer.files && e.dataTransfer.files[0]) {
             const droppedFile = e.dataTransfer.files[0];
-            if (droppedFile.type === "application/pdf" || droppedFile.name.endsWith(".pdf")) {
+            const isSupported = 
+                droppedFile.type === "application/pdf" || 
+                droppedFile.name.toLowerCase().endsWith(".pdf") || 
+                droppedFile.name.toLowerCase().endsWith(".hwpx");
+            if (isSupported) {
                 setFile(droppedFile);
                 setStatus("idle");
             }
@@ -104,9 +108,9 @@ export default function UploadSection() {
                 >
                     <div className="flex flex-col items-center justify-center pt-5 pb-6">
                         <Upload className="w-8 h-8 text-muted mb-2" />
-                        <p className="text-xs text-muted text-center px-4">PDF 파일을 드래그하거나 클릭하여 업로드</p>
+                        <p className="text-xs text-muted text-center px-4">PDF 또는 HWPX 파일을 드래그하거나 클릭하여 업로드</p>
                     </div>
-                    <input type="file" className="hidden" accept=".pdf" onChange={handleFileChange} />
+                    <input type="file" className="hidden" accept=".pdf,.hwpx" onChange={handleFileChange} />
                 </label>
             ) : (
                 <div className="space-y-4 shrink-0">

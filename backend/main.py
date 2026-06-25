@@ -253,14 +253,22 @@ async def upload_document(
     file: UploadFile = File(...),
     current_user: User = Depends(auth.get_current_user)
 ):
-    if not file.filename.endswith(".pdf"):
-        raise HTTPException(status_code=400, detail="Only PDF files are supported")
+    filename = file.filename.lower()
+    is_pdf = filename.endswith(".pdf")
+    is_hwpx = filename.endswith(".hwpx")
+    
+    if not (is_pdf or is_hwpx):
+        raise HTTPException(status_code=400, detail="PDF 또는 HWPX 파일만 업로드할 수 있습니다.")
     
     content = await file.read()
     if len(content) > MAX_FILE_SIZE:
         raise HTTPException(status_code=413, detail="File too large. Maximum size is 10MB.")
         
-    docs = document_processor.process_pdf(content, file.filename)
+    if is_pdf:
+        docs = document_processor.process_pdf(content, file.filename)
+    else:
+        docs = document_processor.process_hwpx(content, file.filename)
+        
     await rag_engine.add_documents(docs, user_id=current_user.id)
     return {"message": f"File {file.filename} uploaded and processed"}
 
