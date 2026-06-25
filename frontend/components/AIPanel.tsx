@@ -241,6 +241,11 @@ export default function AIPanel() {
                     }
                 }
 
+                // If no response content was received, throw an error to be handled in catch block
+                if (!assistantAnswer.trim()) {
+                    throw new Error("서버로부터 답변을 수신하지 못했습니다. API Key 또는 AI Gateway 설정을 확인해 주십시오.");
+                }
+
                 // Auto open report only if intent is REPORT
                 if (intent === "REPORT") {
                     openReportWindow(currentQuery, assistantAnswer, sources, "gpt-5.5", [], undefined);
@@ -259,10 +264,21 @@ export default function AIPanel() {
             
             const detail = error.response?.data?.detail || error.response?.data?.error || error.message;
             const message = typeof detail === "string" ? detail : "서버 통신 중 오류가 발생했습니다.";
-            setMessages((prev) => [
-                ...prev,
-                { role: "assistant", content: `죄송합니다. 오류가 발생했습니다: ${message}` },
-            ]);
+            
+            setMessages((prev) => {
+                const updated = [...prev];
+                const last = updated[updated.length - 1];
+                // Reuse the last empty assistant bubble if available to avoid duplicate empty bubbles
+                if (last && last.role === 'assistant' && !last.content) {
+                    last.content = `죄송합니다. 오류가 발생했습니다: ${message}`;
+                    return updated;
+                } else {
+                    return [
+                        ...updated,
+                        { role: "assistant", content: `죄송합니다. 오류가 발생했습니다: ${message}` }
+                    ];
+                }
+            });
         } finally {
             setLoading(false);
             setAbortController(null);
