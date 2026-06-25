@@ -190,7 +190,7 @@ export default function AIPanel() {
                 // Append an empty assistant message for streaming
                 setMessages((prev) => [
                     ...prev,
-                    { role: "assistant", content: "", sources, intent, engine: "gpt-5-mini" }
+                    { role: "assistant", content: "", sources, intent, engine: "gpt-5.5" }
                 ]);
 
                 // 서버는 순수 텍스트 스트림을 보냄 → 청크를 그대로 누적
@@ -217,7 +217,7 @@ export default function AIPanel() {
 
                 // Auto open report only if intent is REPORT
                 if (intent === "REPORT") {
-                    openReportWindow(currentQuery, assistantAnswer, sources, "gpt-5-mini", [], undefined);
+                    openReportWindow(currentQuery, assistantAnswer, sources, "gpt-5.5", [], undefined);
                     window.dispatchEvent(new CustomEvent('report-generated'));
                 }
             }
