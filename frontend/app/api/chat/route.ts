@@ -92,6 +92,9 @@ export async function POST(req: Request) {
       model: openai(modelName),
       system: systemInstruction,
       messages,
+      onError({ error }) {
+        console.error('AI SDK Stream Error Details:', error);
+      }
     });
 
     return result.toTextStreamResponse({
