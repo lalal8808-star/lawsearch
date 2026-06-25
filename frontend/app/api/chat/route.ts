@@ -1,4 +1,3 @@
-import { createOpenAI } from '@ai-sdk/openai';
 import { streamText } from 'ai';
 import { createClient } from '@supabase/supabase-js';
 
@@ -66,22 +65,8 @@ export async function POST(req: Request) {
       console.error('Error fetching RAG context:', ragErr);
     }
 
-    // 4. OpenAI Provider 초기화 (Vercel AI Gateway / OpenRouter 동적 라우팅 적용)
-    const rawApiKey = process.env.OPENAI_API_KEY || 'mock-openai-key-not-set';
-    const apiKey = rawApiKey.trim();
-    const isOpenRouter = apiKey.startsWith('sk-or-');
-    const gatewayUrl = process.env.VERCEL_AI_GATEWAY_URL || (isOpenRouter ? 'https://openrouter.ai/api/v1' : undefined);
-
-    console.log('DEBUG: apiKey prefix =', apiKey.slice(0, 10));
-    console.log('DEBUG: isOpenRouter =', isOpenRouter);
-    console.log('DEBUG: gatewayUrl =', gatewayUrl);
-
-    const openai = createOpenAI({
-      apiKey,
-      baseURL: gatewayUrl,
-    });
-
-    const persona = `당신의 이름은 'JongLaw AI'입니다. 
+    // 4. 시스템 프롬프트 구성
+    const persona = `당신의 이름은 'JongLaw AI'입니다.
 당신은 사용자의 법률 질의를 변호사 수준의 체계적인 법률 검토 프로세스로 처리하여, 구조화된 법률 검토 보고서를 생성 및 제공하는 전문 법률 어시스턴트입니다.`;
 
     let systemInstruction = '';
@@ -91,10 +76,9 @@ export async function POST(req: Request) {
       systemInstruction = `${persona}\n\n참고 법령 및 자료(판례 포함):\n${ragContext}\n\n전문 변호사로서 [사건 개요, 법률 분석, 판례 분석, 결론, 향후 조치] 순서로 체계적인 자문 리포트를 작성하십시오. 특히 제공된 '판례'를 분석하여 유사 사례에서의 판단 기준을 명확히 제시하십시오.`;
     }
 
-    const modelName = isOpenRouter ? 'openai/gpt-4o' : 'gpt-4o';
-
+    // 5. Vercel AI Gateway 경유 호출 (model 문자열만으로 자동 라우팅, 인증은 VERCEL_OIDC_TOKEN)
     const result = streamText({
-      model: openai(modelName),
+      model: 'openai/gpt-5.5',
       system: systemInstruction,
       messages,
       onError({ error }) {

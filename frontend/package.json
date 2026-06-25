@@ -9,7 +9,6 @@
     "lint": "eslint"
   },
   "dependencies": {
-    "@ai-sdk/openai": "^3.0.74",
     "@ducanh2912/next-pwa": "^10.2.9",
     "@supabase/supabase-js": "^2.93.3",
     "ai": "^6.0.209",

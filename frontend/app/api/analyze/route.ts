@@ -1,4 +1,3 @@
-import { createOpenAI } from '@ai-sdk/openai';
 import { generateText } from 'ai';
 import { createClient } from '@supabase/supabase-js';
 // @ts-ignore
@@ -84,22 +83,7 @@ export async function POST(req: Request) {
       );
     }
 
-    // 4. OpenAI Provider 초기화 (Vercel AI Gateway / OpenRouter 동적 라우팅 적용)
-    const rawApiKey = process.env.OPENAI_API_KEY || 'mock-openai-key-not-set';
-    const apiKey = rawApiKey.trim();
-    const isOpenRouter = apiKey.startsWith('sk-or-');
-    const gatewayUrl = process.env.VERCEL_AI_GATEWAY_URL || (isOpenRouter ? 'https://openrouter.ai/api/v1' : undefined);
-
-    console.log('DEBUG: apiKey prefix =', apiKey.slice(0, 10));
-    console.log('DEBUG: isOpenRouter =', isOpenRouter);
-    console.log('DEBUG: gatewayUrl =', gatewayUrl);
-
-    const openai = createOpenAI({
-      apiKey,
-      baseURL: gatewayUrl,
-    });
-
-    // 5. 프롬프트 및 메세지 구성
+    // 4. 프롬프트 및 메세지 구성
     const systemPrompt = `당신은 대한민국 전문 변호사입니다. 제공된 계약서(또는 법률 문서)를 정밀 분석하여 다음 정보를 추출하고 분석하십시오.
 
 분석 요구사항:
@@ -141,10 +125,9 @@ export async function POST(req: Request) {
       });
     }
 
-    // 6. ChatGPT 5.5 분석 요청 실행
-    const modelName = isOpenRouter ? 'openai/gpt-4o' : 'gpt-4o';
+    // 5. Vercel AI Gateway 경유 분석 요청 (인증은 VERCEL_OIDC_TOKEN 자동 처리)
     const { text } = await generateText({
-      model: openai(modelName),
+      model: 'openai/gpt-5.5',
       messages,
       temperature: 0,
     });
