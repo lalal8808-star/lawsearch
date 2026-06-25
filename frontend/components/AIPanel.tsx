@@ -175,73 +175,39 @@ export default function AIPanel() {
                 const decoder = new TextDecoder();
                 if (!reader) throw new Error('응답 스트림 리더를 생성할 수 없습니다.');
 
-                let assistantAnswer = '';
+                // RAG 소스/intent는 서버가 응답 헤더로 전달 (toTextStreamResponse)
                 let sources: any[] = [];
-                let intent = 'CHAT';
+                try {
+                    const sourcesHeader = response.headers.get('X-RAG-Sources');
+                    if (sourcesHeader) sources = JSON.parse(sourcesHeader);
+                } catch (e) {
+                    console.error('X-RAG-Sources parse error:', e);
+                }
+                const intent = response.headers.get('X-RAG-Intent') || 'CHAT';
+
+                let assistantAnswer = '';
 
                 // Append an empty assistant message for streaming
                 setMessages((prev) => [
-                    ...prev, 
-                    { role: "assistant", content: "", sources: [], intent: "CHAT", engine: "gpt-4o" }
+                    ...prev,
+                    { role: "assistant", content: "", sources, intent, engine: "gpt-5-mini" }
                 ]);
 
+                // 서버는 순수 텍스트 스트림을 보냄 → 청크를 그대로 누적
                 while (true) {
                     const { done, value } = await reader.read();
                     if (done) break;
 
-                    const chunk = decoder.decode(value);
-                    const lines = chunk.split('\n');
-                    
-                    for (const line of lines) {
-                        if (!line.trim()) continue;
+                    assistantAnswer += decoder.decode(value, { stream: true });
 
-                        const colonIndex = line.indexOf(':');
-                        if (colonIndex === -1) continue;
-
-                        const type = line.slice(0, colonIndex);
-                        const content = line.slice(colonIndex + 1);
-
-                        if (type === '0') {
-                            try {
-                                const textVal = JSON.parse(content);
-                                assistantAnswer += textVal;
-                            } catch (e) {
-                                assistantAnswer += content.replace(/^"|"$/g, '');
-                            }
-                            
-                            setMessages((prev) => {
-                                const updated = [...prev];
-                                const last = updated[updated.length - 1];
-                                if (last && last.role === 'assistant') {
-                                    last.content = assistantAnswer;
-                                }
-                                return updated;
-                            });
-                        } else if (type === '8') {
-                            try {
-                                const annotation = JSON.parse(content);
-                                if (Array.isArray(annotation)) {
-                                    for (const item of annotation) {
-                                        if (item.type === 'metadata') {
-                                            sources = item.sources || [];
-                                            intent = item.intent || 'CHAT';
-                                            setMessages((prev) => {
-                                                const updated = [...prev];
-                                                const last = updated[updated.length - 1];
-                                                if (last && last.role === 'assistant') {
-                                                    last.sources = sources;
-                                                    last.intent = intent;
-                                                }
-                                                return updated;
-                                            });
-                                        }
-                                    }
-                                }
-                            } catch (e) {
-                                console.error('Annotation parse error:', e);
-                            }
+                    setMessages((prev) => {
+                        const updated = [...prev];
+                        const last = updated[updated.length - 1];
+                        if (last && last.role === 'assistant') {
+                            last.content = assistantAnswer;
                         }
-                    }
+                        return updated;
+                    });
                 }
 
                 // If no response content was received, throw an error to be handled in catch block
@@ -251,7 +217,7 @@ export default function AIPanel() {
 
                 // Auto open report only if intent is REPORT
                 if (intent === "REPORT") {
-                    openReportWindow(currentQuery, assistantAnswer, sources, "gpt-4o", [], undefined);
+                    openReportWindow(currentQuery, assistantAnswer, sources, "gpt-5-mini", [], undefined);
                     window.dispatchEvent(new CustomEvent('report-generated'));
                 }
             }
