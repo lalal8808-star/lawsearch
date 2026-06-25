@@ -54,17 +54,22 @@ class RAGEngine:
         else:
             print("Supabase client NOT initialized due to missing credentials.")
 
+        is_openrouter = OPENAI_API_KEY.startswith("sk-or-") if OPENAI_API_KEY else False
+        gateway_url = AI_GATEWAY_URL or ("https://openrouter.ai/api/v1" if is_openrouter else None)
+        chat_model = "openai/gpt-4o-mini" if is_openrouter else "gpt-4o-mini"
+        report_model = "openai/gpt-5.5" if is_openrouter else "gpt-5.5"
+
         self.chat_llm = ChatOpenAI(
-            model="gpt-4o-mini", 
+            model=chat_model, 
             temperature=0.7,
             api_key=OPENAI_API_KEY,
-            base_url=AI_GATEWAY_URL
+            base_url=gateway_url
         )
         self.report_llm = ChatOpenAI(
-            model="gpt-4o",
+            model=report_model,
             temperature=0,
             api_key=OPENAI_API_KEY,
-            base_url=AI_GATEWAY_URL
+            base_url=gateway_url
         )
         self._metadata_cache = None # Stores {'sources': set(), 'msts': set()}
 
@@ -195,13 +200,17 @@ class RAGEngine:
             SystemMessage(content="당신은 대한민국 법률 전문가입니다. 아래 사례를 해결하기 위해 반드시 검토해야 할 대한민국 법령 10가지를 추천하십시오. 형식: 법령 명칭만 쉼표(,)로 구분. 추가 설명 생략."),
             HumanMessage(content=f"사례: {case_description}")
         ]
-        response = await self.report_llm.ainvoke(messages)
-        content = self._normalize_content(response.content)
-            
-        import re
-        raw_list = re.split(r'[,|\n]', content)
-        recommendations = [law.strip() for law in raw_list if law.strip()]
-        return recommendations[:10]
+        try:
+            response = await self.report_llm.ainvoke(messages)
+            content = self._normalize_content(response.content)
+                
+            import re
+            raw_list = re.split(r'[,|\n]', content)
+            recommendations = [law.strip() for law in raw_list if law.strip()]
+            return recommendations[:10]
+        except Exception as e:
+            print(f"Error in recommend_laws: {e}")
+            return []
 
     async def detect_required_laws(self, user_query: str) -> List[str]:
         """
@@ -211,15 +220,19 @@ class RAGEngine:
             SystemMessage(content="질문에 답변하기 위해 참조해야 하는 대한민국의 법령 명칭을 추출하십시오. 형식: 법령 명칭만 쉼표(,)로 구분. 없으면 'None'."),
             HumanMessage(content=f"질문: {user_query}")
         ]
-        response = await self.report_llm.ainvoke(messages)
-        content = self._normalize_content(response.content)
-            
-        if "None" in content or not content.strip():
+        try:
+            response = await self.report_llm.ainvoke(messages)
+            content = self._normalize_content(response.content)
+                
+            if "None" in content or not content.strip():
+                return []
+                
+            import re
+            laws = [l.strip() for l in re.split(r'[,|\n]', content) if l.strip()]
+            return [l for l in laws if l and l.lower() != 'none']
+        except Exception as e:
+            print(f"Error in detect_required_laws: {e}")
             return []
-            
-        import re
-        laws = [l.strip() for l in re.split(r'[,|\n]', content) if l.strip()]
-        return [l for l in laws if l and l.lower() != 'none']
 
     async def detect_intent(self, user_query: str) -> str:
         """

@@ -66,10 +66,14 @@ export async function POST(req: Request) {
       console.error('Error fetching RAG context:', ragErr);
     }
 
-    // 4. OpenAI Provider 초기화 (Vercel AI Gateway 적용)
+    // 4. OpenAI Provider 초기화 (Vercel AI Gateway / OpenRouter 동적 라우팅 적용)
+    const apiKey = process.env.OPENAI_API_KEY || 'mock-openai-key-not-set';
+    const isOpenRouter = apiKey.startsWith('sk-or-');
+    const gatewayUrl = process.env.VERCEL_AI_GATEWAY_URL || (isOpenRouter ? 'https://openrouter.ai/api/v1' : undefined);
+
     const openai = createOpenAI({
-      apiKey: process.env.OPENAI_API_KEY || 'mock-openai-key-not-set',
-      baseURL: process.env.VERCEL_AI_GATEWAY_URL || undefined,
+      apiKey,
+      baseURL: gatewayUrl,
     });
 
     const persona = `당신의 이름은 'JongLaw AI'입니다. 
@@ -82,8 +86,10 @@ export async function POST(req: Request) {
       systemInstruction = `${persona}\n\n참고 법령 및 자료(판례 포함):\n${ragContext}\n\n전문 변호사로서 [사건 개요, 법률 분석, 판례 분석, 결론, 향후 조치] 순서로 체계적인 자문 리포트를 작성하십시오. 특히 제공된 '판례'를 분석하여 유사 사례에서의 판단 기준을 명확히 제시하십시오.`;
     }
 
+    const modelName = isOpenRouter ? 'openai/gpt-5.5' : 'gpt-5.5';
+
     const result = streamText({
-      model: openai('gpt-4o'),
+      model: openai(modelName),
       system: systemInstruction,
       messages,
     });

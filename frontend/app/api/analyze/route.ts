@@ -84,10 +84,14 @@ export async function POST(req: Request) {
       );
     }
 
-    // 4. OpenAI Provider 초기화 (Vercel AI Gateway 적용)
+    // 4. OpenAI Provider 초기화 (Vercel AI Gateway / OpenRouter 동적 라우팅 적용)
+    const apiKey = process.env.OPENAI_API_KEY || 'mock-openai-key-not-set';
+    const isOpenRouter = apiKey.startsWith('sk-or-');
+    const gatewayUrl = process.env.VERCEL_AI_GATEWAY_URL || (isOpenRouter ? 'https://openrouter.ai/api/v1' : undefined);
+
     const openai = createOpenAI({
-      apiKey: process.env.OPENAI_API_KEY || 'mock-openai-key-not-set',
-      baseURL: process.env.VERCEL_AI_GATEWAY_URL || undefined,
+      apiKey,
+      baseURL: gatewayUrl,
     });
 
     // 5. 프롬프트 및 메세지 구성
@@ -132,9 +136,10 @@ export async function POST(req: Request) {
       });
     }
 
-    // 6. ChatGPT 4o 분석 요청 실행
+    // 6. ChatGPT 5.5 분석 요청 실행
+    const modelName = isOpenRouter ? 'openai/gpt-5.5' : 'gpt-5.5';
     const { text } = await generateText({
-      model: openai('gpt-4o'),
+      model: openai(modelName),
       messages,
       temperature: 0,
     });
