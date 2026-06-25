@@ -142,7 +142,7 @@ export async function POST(req: Request) {
     }
 
     // 6. ChatGPT 5.5 분석 요청 실행
-    const modelName = isOpenRouter ? 'openai/gpt-5.5' : 'gpt-5.5';
+    const modelName = isOpenRouter ? 'openai/gpt-4o' : 'gpt-4o';
     const { text } = await generateText({
       model: openai(modelName),
       messages,

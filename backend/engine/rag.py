@@ -57,7 +57,7 @@ class RAGEngine:
         is_openrouter = OPENAI_API_KEY.startswith("sk-or-") if OPENAI_API_KEY else False
         gateway_url = AI_GATEWAY_URL or ("https://openrouter.ai/api/v1" if is_openrouter else None)
         chat_model = "openai/gpt-4o-mini" if is_openrouter else "gpt-4o-mini"
-        report_model = "openai/gpt-5.5" if is_openrouter else "gpt-5.5"
+        report_model = "openai/gpt-4o" if is_openrouter else "gpt-4o"
 
         self.chat_llm = ChatOpenAI(
             model=chat_model, 

@@ -91,7 +91,7 @@ export async function POST(req: Request) {
       systemInstruction = `${persona}\n\n참고 법령 및 자료(판례 포함):\n${ragContext}\n\n전문 변호사로서 [사건 개요, 법률 분석, 판례 분석, 결론, 향후 조치] 순서로 체계적인 자문 리포트를 작성하십시오. 특히 제공된 '판례'를 분석하여 유사 사례에서의 판단 기준을 명확히 제시하십시오.`;
     }
 
-    const modelName = isOpenRouter ? 'openai/gpt-5.5' : 'gpt-5.5';
+    const modelName = isOpenRouter ? 'openai/gpt-4o' : 'gpt-4o';
 
     const result = streamText({
       model: openai(modelName),
