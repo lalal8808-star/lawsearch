@@ -605,6 +605,8 @@ export default function LegalReportView({ reportId, query, answer, sources, engi
                                 <ReportChatSection
                                     reportId={!isNaN(parseInt(reportId)) ? parseInt(reportId) : 0}
                                     initialHistory={chat_history}
+                                    query={query}
+                                    answer={answer}
                                 />
                             </div>
                         )}

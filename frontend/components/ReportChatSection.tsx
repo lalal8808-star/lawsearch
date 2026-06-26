@@ -2,7 +2,6 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import { Send, MessageSquare, Loader2, Scale, Zap } from 'lucide-react';
-import api from '@/utils/api';
 
 interface Message {
     role: 'user' | 'assistant';
@@ -12,9 +11,11 @@ interface Message {
 interface ReportChatSectionProps {
     reportId: number;
     initialHistory?: Message[];
+    query?: string;
+    answer?: string;
 }
 
-export default function ReportChatSection({ reportId, initialHistory = [] }: ReportChatSectionProps) {
+export default function ReportChatSection({ initialHistory = [], query, answer }: ReportChatSectionProps) {
     const [messages, setMessages] = useState<Message[]>(initialHistory);
     const [input, setInput] = useState('');
     const [isLoading, setIsLoading] = useState(false);
@@ -28,21 +29,73 @@ export default function ReportChatSection({ reportId, initialHistory = [] }: Rep
 
     const handleSendMessage = async (e: React.FormEvent) => {
         e.preventDefault();
-        if (!input.trim() || isLoading || isNaN(reportId)) return;
+        if (!input.trim() || isLoading) return;
 
         const userMessage = input.trim();
         setInput('');
-        setMessages(prev => [...prev, { role: 'user', content: userMessage }]);
+        const convo = [...messages, { role: 'user' as const, content: userMessage }];
+        setMessages(convo);
         setIsLoading(true);
 
         try {
-            const formData = new FormData();
-            formData.append('query', userMessage);
-            const response = await api.post(`/chat/report/${reportId}`, formData);
-            setMessages(prev => [...prev, { role: 'assistant', content: response.data.answer }]);
+            let token = localStorage.getItem('jonglaw_token');
+            if (token === 'null' || token === 'undefined') token = null;
+
+            // 메인 채팅발 임시 리포트는 백엔드에 저장돼 있지 않으므로, 리포트 내용을
+            // 대화 맥락으로 전달하고 Vercel AI Gateway(/api/chat)로 후속 질문을 처리한다.
+            const payloadMessages = [
+                ...(query ? [{ role: 'user', content: query }] : []),
+                ...(answer ? [{ role: 'assistant', content: answer }] : []),
+                ...convo,
+            ].map(m => ({ role: m.role, content: m.content }));
+
+            const response = await fetch('/api/chat', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+                },
+                body: JSON.stringify({ messages: payloadMessages }),
+            });
+
+            if (!response.ok) {
+                throw new Error('채팅 응답에 실패했습니다.');
+            }
+
+            const reader = response.body?.getReader();
+            const decoder = new TextDecoder();
+            if (!reader) throw new Error('응답 스트림 리더를 생성할 수 없습니다.');
+
+            // 스트리밍용 빈 어시스턴트 버블 추가
+            setMessages(prev => [...prev, { role: 'assistant', content: '' }]);
+
+            let assistantAnswer = '';
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+                assistantAnswer += decoder.decode(value, { stream: true });
+                setMessages(prev => {
+                    const updated = [...prev];
+                    const last = updated[updated.length - 1];
+                    if (last && last.role === 'assistant') last.content = assistantAnswer;
+                    return updated;
+                });
+            }
+
+            if (!assistantAnswer.trim()) {
+                throw new Error('빈 응답을 받았습니다.');
+            }
         } catch (error) {
             console.error('Chat error:', error);
-            setMessages(prev => [...prev, { role: 'assistant', content: '죄송합니다. 오류가 발생했습니다. 다시 시도해 주세요.' }]);
+            setMessages(prev => {
+                const updated = [...prev];
+                const last = updated[updated.length - 1];
+                if (last && last.role === 'assistant' && !last.content) {
+                    last.content = '죄송합니다. 오류가 발생했습니다. 다시 시도해 주세요.';
+                    return updated;
+                }
+                return [...updated, { role: 'assistant', content: '죄송합니다. 오류가 발생했습니다. 다시 시도해 주세요.' }];
+            });
         } finally {
             setIsLoading(false);
         }
