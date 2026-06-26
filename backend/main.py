@@ -55,6 +55,8 @@ logger.info(f"Allowed Origins: {origins}")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,
+    # 이 프로젝트의 Vercel 프리뷰/브랜치 배포 URL(예: lawsearch-<hash>-...vercel.app)도 허용
+    allow_origin_regex=r"https://lawsearch-[a-z0-9-]+\.vercel\.app",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
