@@ -81,11 +81,17 @@ export default function UploadSection() {
             // 문서 처리 + 임베딩이 오래 걸릴 수 있어 넉넉한 타임아웃(120s)
             await api.post("/upload", formData, { timeout: 120000 });
             setStatus("success");
+            // 백엔드가 임베딩을 백그라운드로 처리하므로 목록에 바로 안 뜬다 → 잠시 폴링
             fetchSources();
+            const pollStart = Date.now();
+            const poll = setInterval(() => {
+                fetchSources();
+                if (Date.now() - pollStart > 90000) clearInterval(poll);
+            }, 6000);
             setTimeout(() => {
                 setFile(null);
                 setStatus("idle");
-            }, 3000);
+            }, 4000);
         } catch (error: any) {
             console.error("Upload failed", error);
             const detail =
@@ -160,7 +166,7 @@ export default function UploadSection() {
                         exit={{ opacity: 0 }}
                         className="text-center text-xs text-green-500 mt-2 flex items-center justify-center gap-1 shrink-0"
                     >
-                        <CheckCircle size={12} /> 문서가 AI 데이터베이스에 추가되었습니다.
+                        <CheckCircle size={12} /> 문서를 처리 중입니다. 잠시 후 목록에 표시됩니다.
                     </motion.p>
                 )}
             </AnimatePresence>

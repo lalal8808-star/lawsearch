@@ -151,29 +151,35 @@ class RAGEngine:
         chunks = text_splitter.split_documents(documents)
         if chunks:
             print(f"Adding {len(chunks)} chunks to Supabase...")
-            # Batch processing for stability
-            batch_size = 50
-            for i in range(0, len(chunks), batch_size):
-                batch = chunks[i:i+batch_size]
-                
-                # Prepare data for direct Supabase insert
-                records = []
-                for doc in batch:
-                    if user_id is not None:
-                        doc.metadata["user_id"] = user_id
-                    embedding = await self.embeddings.aembed_query(doc.page_content)
-                    records.append({
-                        "content": doc.page_content,
-                        "metadata": doc.metadata,
-                        "embedding": embedding
-                    })
-                
-                if records:
-                    self.supabase_client.table("documents").insert(records).execute()
-            
-            # Invalidate cache
-            self._metadata_cache = None
-            print(f"Successfully added {len(chunks)} chunks.")
+            try:
+                # Batch processing for stability and speed
+                batch_size = 50
+                for i in range(0, len(chunks), batch_size):
+                    batch = chunks[i:i+batch_size]
+
+                    # Embed the whole batch in one call instead of per-chunk requests
+                    texts = [doc.page_content for doc in batch]
+                    embeddings = await self.embeddings.aembed_documents(texts)
+
+                    records = []
+                    for doc, embedding in zip(batch, embeddings):
+                        if user_id is not None:
+                            doc.metadata["user_id"] = user_id
+                        records.append({
+                            "content": doc.page_content,
+                            "metadata": doc.metadata,
+                            "embedding": embedding
+                        })
+
+                    if records:
+                        self.supabase_client.table("documents").insert(records).execute()
+
+                # Invalidate cache
+                self._metadata_cache = None
+                print(f"Successfully added {len(chunks)} chunks.")
+            except Exception as e:
+                # Runs in a background task; log instead of bubbling to a dead request
+                print(f"Error adding documents: {e}")
 
     def delete_documents_by_mst(self, mst: str):
         """

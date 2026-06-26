@@ -1,4 +1,4 @@
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Depends, Request
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Depends, Request, BackgroundTasks
 import os
 import re
 import logging
@@ -253,27 +253,33 @@ async def search_laws(query: str, page: int = 1):
 @limiter.limit("10/minute")
 async def upload_document(
     request: Request,
+    background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     current_user: User = Depends(auth.get_current_user)
 ):
     filename = file.filename.lower()
     is_pdf = filename.endswith(".pdf")
     is_hwpx = filename.endswith(".hwpx")
-    
+
     if not (is_pdf or is_hwpx):
         raise HTTPException(status_code=400, detail="PDF 또는 HWPX 파일만 업로드할 수 있습니다.")
-    
+
     content = await file.read()
     if len(content) > MAX_FILE_SIZE:
         raise HTTPException(status_code=413, detail="File too large. Maximum size is 10MB.")
-        
+
     if is_pdf:
         docs = document_processor.process_pdf(content, file.filename)
     else:
         docs = document_processor.process_hwpx(content, file.filename)
-        
-    await rag_engine.add_documents(docs, user_id=current_user.id)
-    return {"message": f"File {file.filename} uploaded and processed"}
+
+    if not docs:
+        raise HTTPException(status_code=400, detail="문서에서 추출할 수 있는 텍스트가 없습니다.")
+
+    # 임베딩은 청크 수에 비례해 수 분까지 걸릴 수 있어 HTTP 요청 안에서 처리하면
+    # 연결 타임아웃("Network Error")이 난다. 백그라운드로 넘기고 즉시 응답한다.
+    background_tasks.add_task(rag_engine.add_documents, docs, current_user.id)
+    return {"message": f"File {file.filename} accepted and is being processed", "status": "processing"}
 
 @app.get("/uploads")
 async def get_uploads(current_user: User = Depends(auth.get_current_user)):
