@@ -217,7 +217,21 @@ export default function AIPanel() {
 
                 // Auto open report only if intent is REPORT
                 if (intent === "REPORT") {
-                    openReportWindow(currentQuery, assistantAnswer, sources, "gpt-5.5", [], undefined);
+                    // 백엔드 히스토리에 저장하고 실제 reportId를 받아온다 (채팅이 Gateway로
+                    // 옮겨가면서 백엔드의 자동 저장이 끊겼으므로 여기서 명시적으로 저장)
+                    let realId: number | undefined = undefined;
+                    try {
+                        const saveRes = await api.post('/history', {
+                            query: currentQuery,
+                            answer: assistantAnswer,
+                            engine: 'gpt-5.5',
+                            sources,
+                        });
+                        realId = saveRes.data?.id;
+                    } catch (saveErr) {
+                        console.error('Failed to save report to history', saveErr);
+                    }
+                    openReportWindow(currentQuery, assistantAnswer, sources, "gpt-5.5", [], realId);
                     window.dispatchEvent(new CustomEvent('report-generated'));
                 }
             }

@@ -548,6 +548,32 @@ async def query_context(
 
 # --- History Endpoints ---
 
+class SaveReportRequest(BaseModel):
+    query: str
+    answer: str
+    engine: Optional[str] = None
+    sources: Optional[List[dict]] = None
+
+@app.post("/history")
+async def save_report_history(
+    payload: SaveReportRequest,
+    current_user: User = Depends(auth.get_current_user),
+    db: Session = Depends(get_db)
+):
+    # 채팅이 Vercel /api/chat(gpt-5.5)로 옮겨가면서 백엔드 /query의 히스토리 저장이
+    # 더 이상 호출되지 않으므로, REPORT 생성 후 프론트가 이 엔드포인트로 저장한다.
+    new_report = Report(
+        user_id=current_user.id,
+        query=payload.query,
+        answer=payload.answer,
+        engine=payload.engine,
+        sources=payload.sources or []
+    )
+    db.add(new_report)
+    db.commit()
+    db.refresh(new_report)
+    return {"id": new_report.id}
+
 @app.get("/history")
 async def get_history(current_user: User = Depends(auth.get_current_user), db: Session = Depends(get_db)):
     reports = db.query(Report).filter(Report.user_id == current_user.id).order_by(Report.created_at.desc()).all()
