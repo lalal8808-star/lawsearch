@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { Upload, FileText, X, CheckCircle, Trash2, Database } from "lucide-react";
+import { Upload, FileText, X, CheckCircle, Trash2, Database, AlertCircle } from "lucide-react";
 import api from "@/utils/api";
 import { motion, AnimatePresence } from "framer-motion";
 
@@ -10,6 +10,7 @@ export default function UploadSection() {
     const [status, setStatus] = useState<"idle" | "uploading" | "success" | "error">("idle");
     const [isDragging, setIsDragging] = useState(false);
     const [uploadedSources, setUploadedSources] = useState<string[]>([]);
+    const [errorMsg, setErrorMsg] = useState<string>("");
 
     useEffect(() => {
         fetchSources();
@@ -73,18 +74,27 @@ export default function UploadSection() {
     const handleUpload = async () => {
         if (!file) return;
         setStatus("uploading");
+        setErrorMsg("");
         try {
             const formData = new FormData();
             formData.append("file", file);
-            await api.post("/upload", formData);
+            // 문서 처리 + 임베딩이 오래 걸릴 수 있어 넉넉한 타임아웃(120s)
+            await api.post("/upload", formData, { timeout: 120000 });
             setStatus("success");
             fetchSources();
             setTimeout(() => {
                 setFile(null);
                 setStatus("idle");
             }, 3000);
-        } catch (error) {
+        } catch (error: any) {
             console.error("Upload failed", error);
+            const detail =
+                error?.response?.data?.detail ||
+                (error?.code === "ECONNABORTED"
+                    ? "처리 시간이 초과되었습니다. 잠시 후 다시 시도해 주세요."
+                    : error?.message) ||
+                "업로드에 실패했습니다.";
+            setErrorMsg(typeof detail === "string" ? detail : "업로드에 실패했습니다.");
             setStatus("error");
         }
     };
@@ -132,10 +142,12 @@ export default function UploadSection() {
                         disabled={status === "uploading"}
                         className={`w-full py-2.5 rounded-lg font-medium transition-all ${status === "success"
                             ? "bg-green-500 text-white"
-                            : "bg-primary hover:bg-primary/80 text-white"
+                            : status === "error"
+                                ? "bg-red-500 hover:bg-red-500/80 text-white"
+                                : "bg-primary hover:bg-primary/80 text-white"
                             }`}
                     >
-                        {status === "uploading" ? "업로드 중..." : status === "success" ? "분석 완료" : "AI에게 학습시키기"}
+                        {status === "uploading" ? "업로드 중..." : status === "success" ? "분석 완료" : status === "error" ? "다시 시도" : "AI에게 학습시키기"}
                     </button>
                 </div>
             )}
@@ -149,6 +161,19 @@ export default function UploadSection() {
                         className="text-center text-xs text-green-500 mt-2 flex items-center justify-center gap-1 shrink-0"
                     >
                         <CheckCircle size={12} /> 문서가 AI 데이터베이스에 추가되었습니다.
+                    </motion.p>
+                )}
+            </AnimatePresence>
+
+            <AnimatePresence>
+                {status === "error" && (
+                    <motion.p
+                        initial={{ opacity: 0, y: 5 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        exit={{ opacity: 0 }}
+                        className="text-center text-xs text-red-400 mt-2 flex items-center justify-center gap-1 shrink-0 px-2"
+                    >
+                        <AlertCircle size={12} className="shrink-0" /> {errorMsg}
                     </motion.p>
                 )}
             </AnimatePresence>
