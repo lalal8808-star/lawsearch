@@ -108,7 +108,11 @@ export default function LegalReportView({ reportId, query, answer, sources, engi
             .trim();
     };
 
-    // Parse AI response into sections
+    // Parse AI response into sections (heading-based).
+    // Only treats a line as a section title when it starts with a markdown header (#),
+    // a number (1. / 1)), or is a fully bold line (**...**) AND is short. This prevents
+    // an inline TOC line like "사건 개요 → 법률 분석 → 결론" or prose like "결론부터 말하면"
+    // from being matched instead of the real section bodies further down.
     const parseReport = (text: string) => {
         const sections: { [key: string]: string } = {
             overview: "",
@@ -117,17 +121,54 @@ export default function LegalReportView({ reportId, query, answer, sources, engi
             action: ""
         };
 
-        const overviewMatch = text.match(/(?:1\.\s*)?(?:\*\*)?사건\s*개요(?:\*\*)?([\s\S]*?)(?=(?:\d\.\s*)?(?:\*\*)?법률\s*분석(?:\*\*)?|$)/i);
-        const analysisMatch = text.match(/(?:2\.\s*)?(?:\*\*)?법률\s*분석(?:\*\*)?([\s\S]*?)(?=(?:\d\.\s*)?(?:\*\*)?결론(?:\*\*)?|$)/i);
-        const conclusionMatch = text.match(/(?:3\.\s*)?(?:\*\*)?결론(?:\*\*)?([\s\S]*?)(?=(?:\d\.\s*)?(?:\*\*)?향후\s*조치(?:\*\*)?|$)/i);
-        const actionMatch = text.match(/(?:4\.\s*)?(?:\*\*)?향후\s*조치(?:\*\*)?([\s\S]*?)$/i);
+        const classify = (line: string): string | null => {
+            const isHeading =
+                /^[ \t]*#{1,6}\s+\S/.test(line) ||
+                /^[ \t]*\d+\s*[.)]\s*\S/.test(line) ||
+                /^[ \t]*\*\*[^*]+\*\*[ \t]*$/.test(line);
+            if (!isHeading) return null;
 
-        if (overviewMatch) sections.overview = cleanContent(overviewMatch[1]);
-        if (analysisMatch) sections.analysis = cleanContent(analysisMatch[1]);
-        if (conclusionMatch) sections.conclusion = cleanContent(conclusionMatch[1]);
-        if (actionMatch) sections.action = cleanContent(actionMatch[1]);
+            const t = line
+                .replace(/^[ \t]*#{1,6}\s*/, "")
+                .replace(/^\s*\d+\s*[.)]\s*/, "")
+                .replace(/\*\*/g, "")
+                .replace(/^\s*\d+\s*[.)]\s*/, "")
+                .trim();
+            if (t.length > 12) return null; // long lines are body text, not titles
 
-        if (!sections.overview && !sections.analysis) {
+            if (/^향후\s*조치/.test(t)) return "action";
+            if (/^(?:핵심\s*)?결론/.test(t)) return "conclusion";
+            if (/^판례\s*분석/.test(t)) return "analysis";
+            if (/^법률\s*분석/.test(t)) return "analysis";
+            if (/^사건\s*개요/.test(t)) return "overview";
+            return null;
+        };
+
+        const buf: { [key: string]: string[] } = {
+            overview: [], analysis: [], conclusion: [], action: []
+        };
+        let current: string | null = null;
+
+        for (const line of text.split("\n")) {
+            const sec = classify(line);
+            if (sec) {
+                current = sec;
+                // Preserve the 판례 분석 sub-title inside the analysis section
+                if (/^[ \t]*(?:#{1,6}\s*|\d+\s*[.)]\s*|\*\*)?\s*판례\s*분석/.test(line)) {
+                    buf.analysis.push("• 판례 분석");
+                }
+                continue;
+            }
+            if (current) buf[current].push(line);
+        }
+
+        sections.overview = cleanContent(buf.overview.join("\n"));
+        sections.analysis = cleanContent(buf.analysis.join("\n"));
+        sections.conclusion = cleanContent(buf.conclusion.join("\n"));
+        sections.action = cleanContent(buf.action.join("\n"));
+
+        // Fallback: if nothing parsed, show the whole answer in the overview
+        if (!sections.overview && !sections.analysis && !sections.conclusion && !sections.action) {
             sections.overview = cleanContent(text);
         }
 
