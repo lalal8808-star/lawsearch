@@ -40,10 +40,13 @@ class RAGEngine:
         if not GOOGLE_API_KEY:
             raise ValueError("GOOGLE_API_KEY is required but found None. Check your Render Environment Variables.")
             
-        # Revert to gemini-embedding-001 for stability
+        # gemini-embedding-001 기본 출력은 3072차원인데 Supabase documents.embedding
+        # 컬럼은 vector(768)이라 insert가 'expected 768 dimensions, not 3072'로 거부된다.
+        # 저장·검색 임베딩을 모두 768차원으로 맞춘다.
         self.embeddings = GoogleGenerativeAIEmbeddings(
             model="models/gemini-embedding-001",
-            google_api_key=GOOGLE_API_KEY
+            google_api_key=GOOGLE_API_KEY,
+            output_dimensionality=768
         )
         
         self.supabase_client: Optional[Client] = None
