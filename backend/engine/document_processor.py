@@ -181,6 +181,12 @@ class DocumentProcessor:
                 raise ValueError(f"HWPX 파싱에 실패했습니다: {str(fallback_e)}")
                 
         text = "\n".join(text_list)
+
+        # 본문 텍스트를 못 뽑았으면 빈 리스트 반환 → /upload가 명확한 400으로 처리
+        # (조용히 0청크가 저장되는 것 방지)
+        if not text.strip():
+            return []
+
         return [Document(
             page_content=text,
             metadata={"source": filename, "type": "user_upload"}
