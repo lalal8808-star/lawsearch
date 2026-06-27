@@ -218,11 +218,12 @@ export default function AIPanel() {
                 // intent가 CHAT으로 와도 답변이 구조화된 보고서면 보고서로 처리한다.
                 // (백엔드 intent 분류 실패나 RAG 미도달로 intent가 CHAT으로 떨어져도
                 //  보고서가 채팅창에 그대로 출력되지 않고 새 창으로 열리도록 하는 안전망)
-                const reportHeadings = ['사건\\s*개요', '법률\\s*분석', '판례\\s*분석', '핵심\\s*결론', '향후\\s*조치'];
-                const headingHits = reportHeadings.filter((h) =>
-                    new RegExp(`(^|\\n)\\s*#{1,6}\\s*(?:\\d+[.)]\\s*)?${h}`, 'i').test(assistantAnswer)
-                ).length;
-                const isReport = intent === "REPORT" || headingHits >= 2;
+                const mdHeadingCount = (assistantAnswer.match(/(^|\n)#{2,6}\s+\S/g) || []).length;
+                const reportKeywords = /(사건\s*개요|법률\s*분석|판례\s*분석|핵심\s*결론|향후\s*조치|법적\s*근거|결론)/;
+                const isReport =
+                    intent === "REPORT" ||
+                    mdHeadingCount >= 2 ||
+                    (mdHeadingCount >= 1 && reportKeywords.test(assistantAnswer));
 
                 if (isReport) {
                     // 버블이 본문 대신 완료 카드를 보여주도록 intent를 REPORT로 승격
