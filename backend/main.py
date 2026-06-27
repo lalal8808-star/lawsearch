@@ -8,6 +8,7 @@ from typing import List, Optional
 from sqlalchemy.orm import Session
 from datetime import datetime
 
+from langchain_core.documents import Document
 from api.law_client import law_client
 from engine.rag import rag_engine, vision_engine
 from engine.document_processor import document_processor
