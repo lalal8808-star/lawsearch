@@ -322,13 +322,22 @@ export default function AIPanel() {
                                 <div className="whitespace-pre-wrap text-sm leading-relaxed break-keep">
                                     {msg.role === "assistant" && msg.intent === "REPORT" ? (
                                         <div className="py-2 space-y-2">
-                                            <div className="flex items-center gap-2 text-primary">
-                                                <ShieldCheck size={16} />
-                                                <span className="font-bold">분석이 완료되었습니다.</span>
-                                            </div>
-                                            <p className="text-muted text-xs leading-relaxed">
-                                                요청하신 사안에 대한 전문 법률 자문 보고서가 생성되었습니다. 아래 버튼을 눌러 상세 내용을 확인해 주세요.
-                                            </p>
+                                            {loading && idx === messages.length - 1 ? (
+                                                <div className="flex items-center gap-2 text-primary">
+                                                    <ShieldCheck size={16} className="animate-pulse" />
+                                                    <span className="font-bold animate-pulse">{loadingStage || "보고서 생성 중..."}</span>
+                                                </div>
+                                            ) : (
+                                                <>
+                                                    <div className="flex items-center gap-2 text-primary">
+                                                        <ShieldCheck size={16} />
+                                                        <span className="font-bold">분석이 완료되었습니다.</span>
+                                                    </div>
+                                                    <p className="text-muted text-xs leading-relaxed">
+                                                        요청하신 사안에 대한 전문 법률 자문 보고서가 생성되었습니다. 아래 버튼을 눌러 상세 내용을 확인해 주세요.
+                                                    </p>
+                                                </>
+                                            )}
                                         </div>
                                     ) : (msg as any).intent === "VISION_ANALYSIS" ? (
                                         <div className="space-y-4">
@@ -427,18 +436,25 @@ export default function AIPanel() {
                                                 보고서 열기 (새 창)
                                             </button>
                                         ) : msg.intent === "REPORT" ? (
-                                            <button
-                                                onClick={() => openReportWindow(
-                                                    messages[idx - 1]?.content || "질의 사항",
-                                                    msg.content,
-                                                    msg.sources || [],
-                                                    msg.engine
-                                                )}
-                                                className="flex items-center gap-2 bg-primary text-white text-[10px] font-black px-4 py-2.5 rounded-xl transition-all shadow-lg shadow-primary/20 hover:scale-[1.05] active:scale-[0.95] w-fit uppercase"
-                                            >
-                                                <FileText size={14} />
-                                                보고서 열기 (새 창)
-                                            </button>
+                                            (loading && idx === messages.length - 1) ? (
+                                                <div className="flex items-center gap-2 text-[10px] font-bold text-muted uppercase">
+                                                    <ShieldCheck size={14} className="opacity-40 animate-pulse" />
+                                                    보고서 생성 중...
+                                                </div>
+                                            ) : (
+                                                <button
+                                                    onClick={() => openReportWindow(
+                                                        messages[idx - 1]?.content || "질의 사항",
+                                                        msg.content,
+                                                        msg.sources || [],
+                                                        msg.engine
+                                                    )}
+                                                    className="flex items-center gap-2 bg-primary text-white text-[10px] font-black px-4 py-2.5 rounded-xl transition-all shadow-lg shadow-primary/20 hover:scale-[1.05] active:scale-[0.95] w-fit uppercase"
+                                                >
+                                                    <FileText size={14} />
+                                                    보고서 열기 (새 창)
+                                                </button>
+                                            )
                                         ) : (
                                             <div className="flex items-center gap-2 text-[10px] font-bold text-muted uppercase">
                                                 <Bot size={14} className="opacity-40" />

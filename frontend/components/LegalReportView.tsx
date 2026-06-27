@@ -1,6 +1,6 @@
 "use client";
 
-import { Scale, HelpCircle, ShieldCheck, Zap, Printer, Download, BookOpen, Loader2, X, Info, MessageCircle, MessageSquare, Bookmark, BookmarkPlus, BookmarkCheck, AlertCircle } from "lucide-react";
+import { Scale, HelpCircle, ShieldCheck, Zap, Printer, Download, BookOpen, Loader2, X, Info, MessageCircle, MessageSquare, Bookmark, BookmarkPlus, BookmarkCheck, AlertCircle, Upload } from "lucide-react";
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import axios from "axios";
@@ -528,17 +528,27 @@ export default function LegalReportView({ reportId, query, answer, sources, engi
                                                         <Info size={12} /> 'Watch'를 눌러 개정 정보를 알림받으세요.
                                                     </div>
                                                 </div>
+
+                                                {/* 내가 업로드한 자료가 실제로 분석에 참고됐는지 표시 */}
+                                                {sources.some((s) => s.type === "user_upload") && (
+                                                    <div className="flex items-center gap-2 p-3 bg-emerald-50 border border-emerald-100 rounded-xl text-emerald-700 text-xs font-bold">
+                                                        <Upload size={14} className="shrink-0" />
+                                                        내가 업로드한 자료 {sources.filter((s) => s.type === "user_upload").length}건이 이 분석에 참고되었습니다.
+                                                    </div>
+                                                )}
+
                                                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                                                     {sources.map((src, idx) => {
                                                         const sourceName = src.source || "";
-                                                        const isLaw = src.type === "law" || (sourceName && (
+                                                        const isUpload = src.type === "user_upload";
+                                                        const isLaw = !isUpload && (src.type === "law" || (sourceName && (
                                                             sourceName.endsWith("법") ||
                                                             sourceName.endsWith("령") ||
                                                             sourceName.endsWith("규칙") ||
                                                             sourceName.endsWith("률") ||
                                                             sourceName.includes("법 [") || // Matches "민법 [제750조]"
                                                             sourceName.includes("령 [")
-                                                        ));
+                                                        )));
 
                                                         // Clean law name for subscription (remove article parts)
                                                         const cleanLawName = sourceName.split(" [")[0].trim();
@@ -548,12 +558,12 @@ export default function LegalReportView({ reportId, query, answer, sources, engi
                                                         return (
                                                             <div key={idx} className="p-4 bg-white border border-slate-100 rounded-2xl flex items-center justify-between group hover:border-blue-200 transition-all shadow-sm">
                                                                 <div className="flex items-center gap-3">
-                                                                    <div className={`p-2 rounded-lg ${isLaw ? "bg-blue-50 text-blue-500" : "bg-slate-50 text-slate-400"}`}>
-                                                                        <Scale size={18} />
+                                                                    <div className={`p-2 rounded-lg ${isUpload ? "bg-emerald-50 text-emerald-600" : isLaw ? "bg-blue-50 text-blue-500" : "bg-slate-50 text-slate-400"}`}>
+                                                                        {isUpload ? <Upload size={18} /> : <Scale size={18} />}
                                                                     </div>
                                                                     <div className="flex flex-col">
                                                                         <span className="text-sm font-bold text-slate-800 tracking-tight">{src.source}</span>
-                                                                        <span className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">{isLaw ? "Statute" : "Document"}</span>
+                                                                        <span className={`text-[10px] font-bold uppercase tracking-widest ${isUpload ? "text-emerald-600" : "text-slate-400"}`}>{isUpload ? "내 업로드 자료" : isLaw ? "Statute" : "Document"}</span>
                                                                     </div>
                                                                 </div>
                                                                 {isLaw && user && (

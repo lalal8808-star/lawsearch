@@ -514,7 +514,9 @@ async def query_context(
                 content = row.get('content', '')
                 metadata = row.get('metadata', {})
                 is_upload_type = metadata.get("type") == "user_upload"
-                if is_upload_type and metadata.get("user_id") != user_id_str:
+                # user_id는 JSON 숫자(int)로 저장되고 user_id_str은 문자열이라 직접 비교하면
+                # 항상 불일치 → 업로드 문서가 전부 제외됐었음. 문자열로 맞춰 비교한다.
+                if is_upload_type and str(metadata.get("user_id")) != str(user_id_str):
                     continue
                 docs.append(Document(page_content=content, metadata=metadata))
         
