@@ -117,11 +117,28 @@ class DocumentProcessor:
         """
         Extract text from PDF and convert to LangChain Documents.
         """
-        pdf_reader = PyPDF2.PdfReader(io.BytesIO(file_content))
         text = ""
-        for page in pdf_reader.pages:
-            text += page.extract_text() + "\n"
-            
+        try:
+            pdf_reader = PyPDF2.PdfReader(io.BytesIO(file_content))
+            for page in pdf_reader.pages:
+                text += (page.extract_text() or "") + "\n"
+        except Exception as e:
+            print(f"PyPDF2 extraction failed: {e}")
+
+        # PyPDF2는 한글/CID 폰트 PDF(HWP→PDF 등)에서 빈 텍스트를 내는 경우가 많아 PyMuPDF로 폴백
+        if not text.strip():
+            try:
+                import fitz  # PyMuPDF
+                with fitz.open(stream=file_content, filetype="pdf") as fdoc:
+                    text = "\n".join(page.get_text() for page in fdoc)
+            except Exception as e:
+                print(f"PyMuPDF extraction failed: {e}")
+
+        # 텍스트 레이어가 없는 스캔본/이미지 PDF면 빈 리스트 반환 →
+        # 호출부(/upload)가 명확한 400으로 처리(조용히 0청크 저장되는 것 방지)
+        if not text.strip():
+            return []
+
         return [Document(
             page_content=text,
             metadata={"source": filename, "type": "user_upload"}

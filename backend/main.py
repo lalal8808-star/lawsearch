@@ -274,7 +274,10 @@ async def upload_document(
         docs = document_processor.process_hwpx(content, file.filename)
 
     if not docs:
-        raise HTTPException(status_code=400, detail="문서에서 추출할 수 있는 텍스트가 없습니다.")
+        raise HTTPException(
+            status_code=400,
+            detail="문서에서 텍스트를 추출하지 못했습니다. 스캔본(이미지) PDF이거나 텍스트 레이어가 없는 파일일 수 있습니다. 텍스트 기반 PDF로 다시 시도해 주세요."
+        )
 
     # 임베딩은 청크 수에 비례해 수 분까지 걸릴 수 있어 HTTP 요청 안에서 처리하면
     # 연결 타임아웃("Network Error")이 난다. 백그라운드로 넘기고 즉시 응답한다.
