@@ -215,8 +215,23 @@ export default function AIPanel() {
                     throw new Error("서버로부터 답변을 수신하지 못했습니다. API Key 또는 AI Gateway 설정을 확인해 주십시오.");
                 }
 
-                // Auto open report only if intent is REPORT
-                if (intent === "REPORT") {
+                // intent가 CHAT으로 와도 답변이 구조화된 보고서면 보고서로 처리한다.
+                // (백엔드 intent 분류 실패나 RAG 미도달로 intent가 CHAT으로 떨어져도
+                //  보고서가 채팅창에 그대로 출력되지 않고 새 창으로 열리도록 하는 안전망)
+                const reportHeadings = ['사건\\s*개요', '법률\\s*분석', '판례\\s*분석', '핵심\\s*결론', '향후\\s*조치'];
+                const headingHits = reportHeadings.filter((h) =>
+                    new RegExp(`(^|\\n)\\s*#{1,6}\\s*(?:\\d+[.)]\\s*)?${h}`, 'i').test(assistantAnswer)
+                ).length;
+                const isReport = intent === "REPORT" || headingHits >= 2;
+
+                if (isReport) {
+                    // 버블이 본문 대신 완료 카드를 보여주도록 intent를 REPORT로 승격
+                    setMessages((prev) => {
+                        const updated = [...prev];
+                        const last = updated[updated.length - 1];
+                        if (last && last.role === 'assistant') last.intent = 'REPORT';
+                        return updated;
+                    });
                     // 백엔드 히스토리에 저장하고 실제 reportId를 받아온다 (채팅이 Gateway로
                     // 옮겨가면서 백엔드의 자동 저장이 끊겼으므로 여기서 명시적으로 저장)
                     let realId: number | undefined = undefined;
