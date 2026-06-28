@@ -88,7 +88,8 @@ export async function POST(req: Request) {
 
     return result.toTextStreamResponse({
       headers: {
-        'X-RAG-Sources': JSON.stringify(ragSources),
+        // HTTP 헤더는 Latin-1만 허용 → 한글 소스명이 들어가므로 URL 인코딩 (프론트에서 decode)
+        'X-RAG-Sources': encodeURIComponent(JSON.stringify(ragSources)),
         'X-RAG-Intent': ragIntent,
       }
     });

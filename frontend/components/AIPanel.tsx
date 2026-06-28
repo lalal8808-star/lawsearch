@@ -179,7 +179,7 @@ export default function AIPanel() {
                 let sources: any[] = [];
                 try {
                     const sourcesHeader = response.headers.get('X-RAG-Sources');
-                    if (sourcesHeader) sources = JSON.parse(sourcesHeader);
+                    if (sourcesHeader) sources = JSON.parse(decodeURIComponent(sourcesHeader));
                 } catch (e) {
                     console.error('X-RAG-Sources parse error:', e);
                 }
