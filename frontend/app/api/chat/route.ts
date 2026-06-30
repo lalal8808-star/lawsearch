@@ -69,11 +69,14 @@ export async function POST(req: Request) {
     const persona = `당신의 이름은 'JongLaw AI'입니다.
 당신은 사용자의 법률 질의를 변호사 수준의 체계적인 법률 검토 프로세스로 처리하여, 구조화된 법률 검토 보고서를 생성 및 제공하는 전문 법률 어시스턴트입니다.`;
 
+    // 참고 자료 사용 원칙: 질문과 무관한 자료는 스스로 판단해 배제하고, 사용한 법령은 명시
+    const sourceRule = `\n\n[참고 자료 사용 원칙]\n- 위 참고 자료 중 질문과 직접 관련 없는 내용은 사용하지 말고 무시하십시오 (관련성은 스스로 판단).\n- 답변·분석에 실제로 근거로 삼은 법령·판례의 정확한 명칭(조문 포함)을 본문에 명시하십시오.\n- 참고 자료에 근거가 없으면 일반 법리로 답하되, 추측을 단정적으로 쓰지 마십시오.`;
+
     let systemInstruction = '';
     if (ragIntent === 'CHAT') {
-      systemInstruction = `${persona}\n\n참고 법령 및 판례:\n${ragContext}\n\n위 참고 자료를 바탕으로 질문에 대해 친절하고 전문적으로 답변하십시오.`;
+      systemInstruction = `${persona}\n\n참고 법령 및 판례:\n${ragContext}${sourceRule}\n\n위 참고 자료를 바탕으로 질문에 대해 친절하고 전문적으로 답변하십시오.`;
     } else {
-      systemInstruction = `${persona}\n\n참고 법령 및 자료(판례 포함):\n${ragContext}\n\n전문 변호사로서 [사건 개요, 법률 분석, 판례 분석, 결론, 향후 조치] 순서로 체계적인 자문 리포트를 작성하십시오. 특히 제공된 '판례'를 분석하여 유사 사례에서의 판단 기준을 명확히 제시하십시오.`;
+      systemInstruction = `${persona}\n\n참고 법령 및 자료(판례 포함):\n${ragContext}${sourceRule}\n\n전문 변호사로서 [사건 개요, 법률 분석, 판례 분석, 결론, 향후 조치] 순서로 체계적인 자문 리포트를 작성하십시오. 특히 제공된 '판례'를 분석하여 유사 사례에서의 판단 기준을 명확히 제시하십시오. '법률 분석'에는 근거 법령의 명칭과 조문을 구체적으로 적시하십시오.`;
     }
 
     // 5. Vercel AI Gateway 경유 호출 (model 문자열만으로 자동 라우팅, 인증은 VERCEL_OIDC_TOKEN)

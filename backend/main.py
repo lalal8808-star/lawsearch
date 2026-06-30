@@ -499,6 +499,10 @@ async def query_context(
 
         # 3. Retrieve context and sources from RAGEngine
         intent = await rag_engine.detect_intent(query)
+        # 업로드 소스는 질의와 충분히 관련될 때만 참고한다(무관한 자료가 딸려오는 것 방지).
+        # 코사인 유사도 임계값(환경변수로 조정 가능). 법령/판례에는 이 게이트를 적용하지 않는다.
+        UPLOAD_SIM_THRESHOLD = float(os.getenv("UPLOAD_SIM_THRESHOLD", "0.55"))
+        keywords = [k for k in re.split(r'\s+', query) if len(k) > 1]
         docs = []
         if rag_engine.supabase_client:
             user_id_str = str(current_user.id) if current_user else None
@@ -506,26 +510,37 @@ async def query_context(
                 "match_documents",
                 {
                     "query_embedding": await rag_engine.embeddings.aembed_query(query),
-                    "match_threshold": 0.2,
-                    "match_count": 25
+                    "match_threshold": 0.3,
+                    "match_count": 30
                 }
             ).execute()
-            
+
             for row in response.data:
                 content = row.get('content', '')
                 metadata = row.get('metadata', {})
+                sim = row.get('similarity')
                 is_upload_type = metadata.get("type") == "user_upload"
-                # user_id는 JSON 숫자(int)로 저장되고 user_id_str은 문자열이라 직접 비교하면
-                # 항상 불일치 → 업로드 문서가 전부 제외됐었음. 문자열로 맞춰 비교한다.
-                if is_upload_type and str(metadata.get("user_id")) != str(user_id_str):
-                    continue
+                if is_upload_type:
+                    # 본인 업로드만 (user_id는 JSON 숫자라 문자열로 맞춰 비교)
+                    if str(metadata.get("user_id")) != str(user_id_str):
+                        continue
+                    # 관련성 게이트: 유사도가 임계 미만이면 제외(유사도 미제공 시 키워드 겹침 요구)
+                    if sim is not None:
+                        if sim < UPLOAD_SIM_THRESHOLD:
+                            logger.info(f"[query-context] upload SKIP sim={sim:.3f} < {UPLOAD_SIM_THRESHOLD} src={metadata.get('source')}")
+                            continue
+                        logger.info(f"[query-context] upload OK sim={sim:.3f} src={metadata.get('source')}")
+                    elif not any(kw in content for kw in keywords):
+                        continue
+                metadata['similarity'] = sim
                 docs.append(Document(page_content=content, metadata=metadata))
-        
-        docs = docs[:15]
-        keywords = [k for k in re.split(r'\s+', query) if len(k) > 1]
+
+        # 키워드 겹침 + 유사도로 재정렬한 뒤 상위 15개 선택
+        # (정렬 전에 자르면 법령이 업로드 청크에 밀려 잘리므로 반드시 정렬 후 슬라이스)
         for doc in docs:
             doc.metadata['boost'] = sum(10 for kw in keywords if kw in doc.page_content)
-        docs = sorted(docs, key=lambda x: x.metadata.get('boost', 0), reverse=True)
+        docs.sort(key=lambda d: (d.metadata.get('boost', 0), d.metadata.get('similarity') or 0), reverse=True)
+        docs = docs[:15]
 
         context_parts = []
         seen_contents = set()
