@@ -169,7 +169,6 @@ async def get_current_user(
     payload = decode_token_payload(token)
     
     sub: str = payload.get("sub")
-    print(f"DEBUG: Token sub value is '{sub}'") 
     if sub is None:
         raise credentials_exception
         

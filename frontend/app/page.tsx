@@ -20,12 +20,26 @@ export default function Home() {
   const [unreadCount, setUnreadCount] = useState(0);
 
   useEffect(() => {
-    if (user) {
+    if (!user) return;
+
+    let interval: ReturnType<typeof setInterval> | null = null;
+    const start = () => {
+      if (interval) return;
       fetchUnreadCount();
-      // Poll for notifications every 2 minutes
-      const interval = setInterval(fetchUnreadCount, 120000);
-      return () => clearInterval(interval);
-    }
+      interval = setInterval(fetchUnreadCount, 120000); // 2분 간격
+    };
+    const stop = () => {
+      if (interval) { clearInterval(interval); interval = null; }
+    };
+    // 탭이 보일 때만 폴링 (백그라운드/새벽에 방치된 탭이 계속 호출하지 않도록)
+    const onVisibility = () => (document.visibilityState === "visible" ? start() : stop());
+
+    if (document.visibilityState === "visible") start();
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      document.removeEventListener("visibilitychange", onVisibility);
+      stop();
+    };
   }, [user]);
 
   const fetchUnreadCount = async () => {
