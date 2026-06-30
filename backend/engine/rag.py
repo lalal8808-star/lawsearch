@@ -3,7 +3,7 @@ import re
 import asyncio
 import base64
 from dotenv import load_dotenv
-from langchain_google_genai import GoogleGenerativeAIEmbeddings
+from langchain_google_genai import GoogleGenerativeAIEmbeddings, ChatGoogleGenerativeAI
 from langchain_openai import ChatOpenAI
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_core.documents import Document
@@ -57,22 +57,18 @@ class RAGEngine:
         else:
             print("Supabase client NOT initialized due to missing credentials.")
 
-        is_openrouter = OPENAI_API_KEY.startswith("sk-or-") if OPENAI_API_KEY else False
-        gateway_url = AI_GATEWAY_URL or ("https://openrouter.ai/api/v1" if is_openrouter else None)
-        chat_model = "openai/gpt-4o-mini" if is_openrouter else "gpt-4o-mini"
-        report_model = "openai/gpt-4o" if is_openrouter else "gpt-4o"
-
-        self.chat_llm = ChatOpenAI(
-            model=chat_model, 
+        # 백엔드 보조 LLM(detect_intent / detect_required_laws 등)은 Gemini를 사용한다.
+        # OPENAI_API_KEY는 미설정('mock-...')이라 OpenAI로 호출하면 401 → 법령 탐지가 실패해
+        # 법령 자동동기화·출처 표시가 안 됐다. 임베딩과 동일하게 GOOGLE_API_KEY로 통일.
+        self.chat_llm = ChatGoogleGenerativeAI(
+            model="gemini-2.5-flash",
             temperature=0.7,
-            api_key=OPENAI_API_KEY,
-            base_url=gateway_url
+            google_api_key=GOOGLE_API_KEY,
         )
-        self.report_llm = ChatOpenAI(
-            model=report_model,
+        self.report_llm = ChatGoogleGenerativeAI(
+            model="gemini-2.5-flash",
             temperature=0,
-            api_key=OPENAI_API_KEY,
-            base_url=gateway_url
+            google_api_key=GOOGLE_API_KEY,
         )
         self._metadata_cache = None # Stores {'sources': set(), 'msts': set()}
 
