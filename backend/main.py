@@ -140,6 +140,13 @@ async def sync_user(
         payload = auth.decode_token_payload(token)
         if payload.get("sub") != request.supabase_id:
             raise HTTPException(status_code=403, detail="Token sub does not match requested supabase_id")
+        # 이메일도 토큰과 일치해야 한다. 그렇지 않으면 공격자가 자신의 유효한 supabase_id로
+        # 타인의 이메일(username)을 보내 그 레거시 계정을 자신에게 연결(계정 탈취)할 수 있다.
+        token_email = payload.get("email")
+        if token_email and request.username and token_email.strip().lower() != request.username.strip().lower():
+            raise HTTPException(status_code=403, detail="Token email does not match requested username")
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"DEBUG: Token validation failed in sync: {e}")
         raise HTTPException(status_code=401, detail="Invalid token")

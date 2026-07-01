@@ -151,7 +151,17 @@ class DocumentProcessor:
         """
         import zipfile
         import xml.etree.ElementTree as ET
-        
+
+        # zip bomb 방어: 압축 해제 총량이 과도하면(예: 10MB 업로드가 GB로 팽창) 거부한다.
+        MAX_DECOMPRESSED = 80 * 1024 * 1024  # 80MB
+        try:
+            with zipfile.ZipFile(io.BytesIO(file_content)) as z:
+                if sum(info.file_size for info in z.infolist()) > MAX_DECOMPRESSED:
+                    print("HWPX rejected: decompressed size exceeds limit")
+                    return []
+        except Exception:
+            return []  # 손상되었거나 zip이 아닌 파일
+
         text_list = []
         try:
             with zipfile.ZipFile(io.BytesIO(file_content)) as z:
