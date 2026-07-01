@@ -10,7 +10,7 @@ from datetime import datetime
 
 from langchain_core.documents import Document
 from api.law_client import law_client
-from engine.rag import rag_engine, vision_engine
+from engine.rag import rag_engine
 from engine.document_processor import document_processor
 from engine.legal_watch import legal_watch_engine
 import database
@@ -295,157 +295,6 @@ async def delete_upload(source: str, current_user: User = Depends(auth.get_curre
     rag_engine.delete_user_upload(source, user_id=current_user.id)
     return {"message": f"Source {source} deleted"}
 
-@app.post("/analyze-image")
-@app.post("/analyze-document")
-@limiter.limit("10/minute")
-async def analyze_document(
-    request: Request,
-    file: UploadFile = File(...),
-    description: Optional[str] = Form(None),
-    current_user: User = Depends(auth.get_current_user)
-):
-    valid_image_types = ["image/jpeg", "image/png", "image/jpg", "image/webp"]
-    
-    try:
-        content = await file.read()
-        if len(content) > MAX_FILE_SIZE:
-            raise HTTPException(status_code=413, detail="File too large. Maximum size is 10MB.")
-            
-        if file.content_type in valid_image_types:
-            result = await vision_engine.analyze_contract_document(image_bytes=content, user_description=description)
-            if "error" in result:
-                raise HTTPException(status_code=400, detail=result["error"])
-            return result
-        elif file.content_type == "application/pdf" or file.filename.lower().endswith(".pdf"):
-            try:
-                docs = document_processor.process_pdf(content, file.filename)
-            except Exception as pdf_err:
-                logger.error(f"PDF processing error: {pdf_err}")
-                raise HTTPException(
-                    status_code=400, 
-                    detail="PDF 파일의 텍스트를 추출하는 데 실패했습니다. 파일이 손상되었거나 보안이 설정되어 있을 수 있습니다."
-                )
-            
-            full_text = "\n".join([doc.page_content for doc in docs]).strip()
-            if not full_text:
-                raise HTTPException(
-                    status_code=400, 
-                    detail="PDF 파일에서 텍스트를 추출할 수 없습니다. 스캔본이나 이미지 형태의 PDF일 수 있으니, 이미지 형식(JPG, PNG)으로 변환 후 업로드해 주세요."
-                )
-                
-            result = await vision_engine.analyze_contract_document(text_content=full_text, user_description=description)
-            if "error" in result:
-                raise HTTPException(status_code=400, detail=result["error"])
-            return result
-        else:
-            raise HTTPException(status_code=400, detail="Only image or PDF files are supported")
-    except HTTPException as he:
-        raise he
-    except Exception as e:
-        logger.error(f"Unexpected document analysis error: {e}")
-        raise HTTPException(status_code=500, detail=f"문서 분석 중 서버 내부 예외가 발생했습니다: {str(e)}")
-
-@app.post("/query")
-@limiter.limit("30/minute")
-async def query_ai(
-    request: Request,
-    query: str = Form(...), 
-    db: Session = Depends(get_db), 
-    current_user: Optional[User] = Depends(auth.get_current_user_optional) # Custom optional helper
-):
-    logger.debug(f"DEBUG: /query received. user={'Anonymous' if not current_user else current_user.username}")
-    try:
-        # 1. Autonomous Syncing Logic
-        required_laws = await rag_engine.detect_required_laws(query)
-        if required_laws:
-            synced_sources = rag_engine._get_synced_sources()
-            for law_name in required_laws:
-                is_synced = any(law_name in s or s in law_name for s in synced_sources)
-                if not is_synced:
-                    try:
-                        search_results = await law_client.search_laws(law_name)
-                        law_list = search_results.get("law", [])
-                        if isinstance(law_list, dict): law_list = [law_list]
-                            
-                        best_match = None
-                        if law_list:
-                            for l in law_list:
-                                if l.get("법령명한글") == law_name:
-                                    best_match = l
-                                    break
-                            if not best_match: best_match = law_list[0]
-                        
-                        if best_match:
-                            mst = best_match.get("법령일련번호")
-                            law_data = await law_client.get_law_detail(mst)
-                            if law_data:
-                                docs = document_processor.process_law_xml(law_data, mst)
-                                if docs:
-                                    rag_engine.delete_documents_by_mst(mst)
-                                    await rag_engine.add_documents(docs)
-                    except Exception as sync_e:
-                        print(f"Warning: Auto-sync failed for law {law_name}: {sync_e}")
-
-        # 2. Autonomous Precedent Syncing
-        try:
-            # We use the user query to find relevant precedents
-            # Limit to top 3 for performance
-            prec_search = await law_client.search_precedents(query)
-            prec_list = prec_search.get("prec", [])
-            if isinstance(prec_list, dict): prec_list = [prec_list]
-            
-            synced_msts = rag_engine.get_synced_msts() # For precedents, we use ID as MST field
-            
-            for prec_item in prec_list[:3]:
-                prec_id = prec_item.get("판례일련번호")
-                if prec_id and str(prec_id) not in synced_msts:
-                    print(f"Auto-syncing precedent: {prec_item.get('사건명')} ({prec_id})")
-                    prec_detail = await law_client.get_precedent_detail(prec_id)
-                    if prec_detail:
-                        docs = document_processor.process_precedent_xml(prec_detail, prec_id)
-                        if docs:
-                            await rag_engine.add_documents(docs)
-        except Exception as prec_sync_e:
-            print(f"Warning: Precedent auto-sync failed: {prec_sync_e}")
-
-        # 3. Final RAG Query
-        result = await rag_engine.query(
-            query, 
-            target_laws=required_laws,
-            current_user_id=current_user.id if current_user else None
-        )
-        
-        # 3. Save to history if logged in AND intent is REPORT
-        intent = result.get("intent", "").upper()
-        logger.debug(f"DEBUG: Query result intent={intent}, user_logged_in={current_user is not None}")
-        
-        if current_user and intent == "REPORT":
-            logger.debug(f"DEBUG: Saving report to history for user_id={current_user.id}")
-            new_report = Report(
-                user_id=current_user.id,
-                query=query,
-                answer=result["answer"],
-                engine=result.get("engine"),
-                sources=result["sources"]
-            )
-            try:
-                db.add(new_report)
-                db.commit()
-                db.refresh(new_report)
-                result["report_id"] = new_report.id
-                logger.debug(f"DEBUG: Report saved successfully with id={new_report.id}")
-            except Exception as save_err:
-                logger.error(f"DEBUG: Database SAVE ERROR: {save_err}")
-                db.rollback()
-        elif intent == "REPORT" and not current_user:
-            logger.info("DEBUG: Intent is REPORT but user not logged in. skipping save.")
-        elif current_user and intent != "REPORT":
-            logger.debug(f"DEBUG: User logged in but intent {intent} is not REPORT. skipping save.")
-
-        return result
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
 @app.get("/query-context")
 async def query_context(
     query: str,
@@ -499,9 +348,6 @@ async def query_context(
 
         # 3. Retrieve context and sources from RAGEngine
         intent = await rag_engine.detect_intent(query)
-        # 업로드 소스는 질의와 충분히 관련될 때만 참고한다(무관한 자료가 딸려오는 것 방지).
-        # 코사인 유사도 임계값(환경변수로 조정 가능). 법령/판례에는 이 게이트를 적용하지 않는다.
-        UPLOAD_SIM_THRESHOLD = float(os.getenv("UPLOAD_SIM_THRESHOLD", "0.55"))
         keywords = [k for k in re.split(r'\s+', query) if len(k) > 1]
         docs = []
         if rag_engine.supabase_client:
@@ -516,34 +362,22 @@ async def query_context(
             ).execute()
 
             for row in response.data:
-                content = row.get('content', '')
                 metadata = row.get('metadata', {})
-                sim = row.get('similarity')
-                is_upload_type = metadata.get("type") == "user_upload"
-                if is_upload_type:
-                    # 본인 업로드만 (user_id는 JSON 숫자라 문자열로 맞춰 비교)
-                    if str(metadata.get("user_id")) != str(user_id_str):
-                        continue
-                    # 관련성 게이트: 유사도가 임계 미만이면 제외(유사도 미제공 시 키워드 겹침 요구)
-                    if sim is not None:
-                        if sim < UPLOAD_SIM_THRESHOLD:
-                            logger.info(f"[query-context] upload SKIP sim={sim:.3f} < {UPLOAD_SIM_THRESHOLD} src={metadata.get('source')}")
-                            continue
-                        logger.info(f"[query-context] upload OK sim={sim:.3f} src={metadata.get('source')}")
-                    elif not any(kw in content for kw in keywords):
-                        continue
-                metadata['similarity'] = sim
-                docs.append(Document(page_content=content, metadata=metadata))
+                # 업로드 자료는 본인 것만 (user_id는 JSON 숫자라 문자열로 맞춰 비교)
+                if metadata.get("type") == "user_upload" and str(metadata.get("user_id")) != str(user_id_str):
+                    continue
+                metadata['similarity'] = row.get('similarity')
+                docs.append(Document(page_content=row.get('content', ''), metadata=metadata))
 
-        # 업로드 자료 관련성 2차 판단: 임베딩 유사도로는 같은 도메인(변전 vs 지중송전)을
-        # 못 가르므로, 후보 업로드 파일 제목을 LLM에게 물어 질문과 무관한 자료는 제외한다.
+        # 업로드 자료 관련성 판단: 임베딩 유사도로는 같은 도메인(변전 vs 지중송전)을 못 가르므로
+        # (관련 없어도 0.7로 붙음), 후보 업로드 파일 제목을 LLM에게 물어 무관한 자료는 제외한다.
         upload_sources = {d.metadata.get("source") for d in docs if d.metadata.get("type") == "user_upload"}
         if upload_sources:
             relevant = await rag_engine.filter_relevant_uploads(query, list(upload_sources))
             before = len(docs)
             docs = [d for d in docs
                     if d.metadata.get("type") != "user_upload" or d.metadata.get("source") in relevant]
-            logger.info(f"[query-context] upload relevance filter kept={relevant} docs {before}->{len(docs)}")
+            logger.info(f"[query-context] upload relevance kept={relevant} docs {before}->{len(docs)}")
 
         # 키워드 겹침 + 유사도로 재정렬한 뒤 상위 15개 선택
         # (정렬 전에 자르면 법령이 업로드 청크에 밀려 잘리므로 반드시 정렬 후 슬라이스)
@@ -625,51 +459,6 @@ async def delete_report(report_id: int, current_user: User = Depends(auth.get_cu
     db.delete(report)
     db.commit()
     return {"message": "Report deleted successfully"}
-
-@app.post("/chat/report/{report_id}")
-async def report_followup_chat(
-    report_id: int,
-    query: str = Form(...),
-    current_user: User = Depends(auth.get_current_user),
-    db: Session = Depends(get_db)
-):
-    logger.debug(f"DEBUG: report_followup_chat received. report_id={report_id}, query={query}")
-    if not current_user:
-        logger.info("DEBUG: No current user found (Unauthorized)")
-        raise HTTPException(status_code=401, detail="Authentication required")
-        
-    logger.debug(f"DEBUG: Authenticated user_id={current_user.id}")
-    report = db.query(Report).filter(Report.id == report_id).first()
-    
-    if not report:
-        logger.error(f"DEBUG: Report {report_id} not found in database")
-        raise HTTPException(status_code=404, detail="Report not found")
-        
-    if report.user_id != current_user.id:
-        logger.error(f"DEBUG: Owner mismatch. Report {report_id} belongs to user_id={report.user_id}, but current authenticated user is user_id={current_user.id}")
-        raise HTTPException(status_code=403, detail="You do not have permission to view this report")
-    
-    # Context is the report's answer
-    report_context = report.answer
-    chat_history = report.chat_history or []
-    
-    logger.debug(f"DEBUG: Invoking RAG engine for followup. Context length={len(report_context)}")
-    result = await rag_engine.query_followup(query, report_context, chat_history)
-    
-    # Update history in DB
-    new_history = list(chat_history)
-    new_history.append({"role": "user", "content": query})
-    new_history.append({"role": "assistant", "content": result["answer"]})
-    
-    report.chat_history = new_history
-    try:
-        db.commit()
-        logger.debug(f"DEBUG: Chat history updated for report {report_id}")
-    except Exception as e:
-        logger.error(f"DEBUG: Failed to commit chat history update: {e}")
-        db.rollback()
-    
-    return result
 
 # --- Legal Watch Endpoints ---
 

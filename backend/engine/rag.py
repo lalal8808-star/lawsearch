@@ -5,7 +5,6 @@ import base64
 import logging
 from dotenv import load_dotenv
 from langchain_google_genai import GoogleGenerativeAIEmbeddings, ChatGoogleGenerativeAI
-from langchain_openai import ChatOpenAI
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_core.documents import Document
 from langchain_core.messages import SystemMessage, HumanMessage
@@ -21,14 +20,8 @@ GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
 
-# OpenAI and AI Gateway Configuration
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY") or "mock-openai-key-not-set"
-AI_GATEWAY_URL = os.getenv("AI_GATEWAY_URL") or None
-
 if not GOOGLE_API_KEY:
     print("CRITICAL ERROR: GOOGLE_API_KEY is not set in environment variables!")
-if not OPENAI_API_KEY:
-    print("WARNING: OPENAI_API_KEY is not set. ChatGPT translation/analysis may not function.")
 if not SUPABASE_URL or not SUPABASE_KEY:
     print("WARNING: Supabase credentials not fully set. Vector store may not function.")
 
@@ -60,9 +53,9 @@ class RAGEngine:
         else:
             print("Supabase client NOT initialized due to missing credentials.")
 
-        # 백엔드 보조 LLM(detect_intent / detect_required_laws 등)은 Gemini를 사용한다.
-        # OPENAI_API_KEY는 미설정('mock-...')이라 OpenAI로 호출하면 401 → 법령 탐지가 실패해
-        # 법령 자동동기화·출처 표시가 안 됐다. 임베딩과 동일하게 GOOGLE_API_KEY로 통일.
+        # 백엔드 보조 LLM(detect_intent / detect_required_laws / filter_relevant_uploads)은
+        # 임베딩과 동일하게 Gemini(GOOGLE_API_KEY)를 사용한다. 메인 채팅/보고서 생성은
+        # 프론트에서 Vercel AI Gateway(gpt-5.5)로 처리하므로 백엔드엔 OpenAI 키가 필요 없다.
         self.chat_llm = ChatGoogleGenerativeAI(
             model="gemini-2.5-flash",
             temperature=0.7,
@@ -298,169 +291,6 @@ class RAGEngine:
             print(f"Error in filter_relevant_uploads: {e}")
             return set(sources)  # 판단 실패 시 관련 데이터 유실 방지 위해 유지(유사도 게이트는 이미 적용됨)
 
-    async def query(self, user_query: str, target_laws: List[str] = None, current_user_id: Optional[int] = None) -> Dict[str, Any]:
-        """
-        Modernized legal query (Fully Anonymous, Async, and Re-ranked).
-        """
-        # 1. Intent Detection
-        intent = await self.detect_intent(user_query)
-        
-        # 2. Retrieval Setup (k=15 for precision)
-        search_kwargs = {"k": 15}
-        target_sources = target_laws or []
-        all_synced_sources = self._get_synced_sources()
-        for s in all_synced_sources:
-            if s in user_query and s not in target_sources:
-                target_sources.append(s)
-
-        if target_sources:
-            search_kwargs["filter"] = {
-                "$or": [
-                    {"source": {"$in": target_sources}},
-                    {"type": "user_upload"},
-                    {"type": "precedent"}
-                ]
-            }
-
-        try:
-            if not self.supabase_client:
-                return {
-                    "answer": "죄송합니다. 현재 법률 데이터베이스(Vector DB)가 연결되어 있지 않아 정확한 검토가 어렵습니다. 관리자에게 문의하여 Supabase 설정을 확인해주세요.",
-                    "sources": [],
-                    "intent": intent,
-                    "engine": "Fallback"
-                }
-
-            # 3. Direct RPC call to bypass LangChain's buggy SupabaseVectorStore retriever
-            # This fix is robust against version conflicts between langchain-community and supabase-py
-            query_embedding = await self.embeddings.aembed_query(user_query)
-            
-            rpc_params = {
-                "query_embedding": query_embedding,
-                "match_threshold": 0.3, # Permissive threshold for initial retrieval
-                "match_count": 25,      # Fetch more for manual Python-side filtering
-            }
-            
-            # Use direct RPC call
-            rpc_response = self.supabase_client.rpc("match_documents", rpc_params).execute()
-            
-            docs = []
-            for item in rpc_response.data:
-                metadata = item.get("metadata", {})
-                content = item.get("content", "")
-                
-                # Apply filters manually to ensure consistent behavior
-                is_upload_type = metadata.get("type") == "user_upload"
-                if is_upload_type:
-                    if current_user_id is None or str(metadata.get("user_id")) != str(current_user_id):
-                        continue
-
-                if target_sources:
-                    is_target = metadata.get("source") in target_sources
-                    is_precedent = metadata.get("type") == "precedent"
-                    if not (is_target or is_upload_type or is_precedent):
-                        continue
-                
-                docs.append(Document(page_content=content, metadata=metadata))
-            
-            # 4. Limit to top results and constructed context
-            docs = docs[:15]
-            
-            # 5. Dynamic Re-ranking
-            keywords = [k for k in re.split(r'\s+', user_query) if len(k) > 1]
-            for doc in docs:
-                doc.metadata['boost'] = sum(10 for kw in keywords if kw in doc.page_content)
-            
-            docs = sorted(docs, key=lambda x: x.metadata.get('boost', 0), reverse=True)
-
-            # 6. Prompt Construction
-            context_parts = []
-            seen_contents = set()
-            sources_list = []
-            
-            # Pre-populate sources with target laws to ensure they appear even if no docs matched
-            if target_laws:
-                for tlaw in target_laws:
-                    if tlaw and tlaw.lower() != 'none':
-                        sources_list.append({"source": tlaw, "type": "law"})
-
-            for doc in docs:
-                content = doc.page_content.strip()
-                src = doc.metadata.get("source", "Unknown").strip()
-                src_type = doc.metadata.get("type", "unknown")
-                
-                if content not in seen_contents:
-                    context_parts.append(f"[{src}] {content}")
-                    seen_contents.add(content)
-                    if src not in [s['source'] for s in sources_list]:
-                        sources_list.append({"source": src, "type": src_type})
-
-            context = "\n\n".join(context_parts[:10])
-            
-            # 5. Persona & Prompt Construction
-            persona = """
-            당신의 이름은 'JongLaw AI'입니다. 
-            당신은 사용자의 법률 질의를 변호사 수준의 체계적인 법률 검토 프로세스로 처리하여, 구조화된 법률 검토 보고서를 생성 및 제공하는 전문 법률 어시스턴트입니다.
-            """
-
-            if intent == "CHAT":
-                system_instruction = f"{persona}\n\n참고 법령 및 판례:\n{context}\n\n위 가이드라인에 따라 친절하고 전문적으로 답변하십시오."
-                messages = [SystemMessage(content=system_instruction), HumanMessage(content=f"질문: {user_query}")]
-                llm = self.chat_llm
-            else:
-                system_instruction = f"{persona}\n\n참고 법령 및 자료(판례 포함):\n{context}\n\n전문 변호사로서 [사건 개요, 법률 분석, 판례 분석, 결론, 향후 조치] 순서로 체계적인 자문 리포트를 작성하십시오. 특히 제공된 '판례'를 분석하여 유사 사례에서의 판단 기준을 명확히 제시하십시오."
-                messages = [SystemMessage(content=system_instruction), HumanMessage(content=f"질문: {user_query}")]
-                llm = self.report_llm
-
-            response = await llm.ainvoke(messages)
-            
-            return {
-                "answer": self._normalize_content(response.content),
-                "sources": sources_list,
-                "intent": intent,
-                "engine": llm.model_name if hasattr(llm, 'model_name') else llm.model
-            }
-        except Exception as e:
-            print(f"Error in modernized query [v2-rpc-fix]: {e}")
-            raise e
-
-    async def query_followup(self, user_query: str, report_context: str, chat_history: List[Dict[str, str]]) -> Dict[str, Any]:
-        """
-        Deep follow-up Q&A based on a specific report.
-        """
-        history_text = "\n".join([f"{m['role'].upper()}: {m['content']}" for m in chat_history])
-        
-        system_content = f"""
-        당신은 앞서 작성된 법률 리포트에 대해 심층적인 답변을 제공하는 전문 법률 어시스턴트 'JongLaw AI'입니다.
-        
-        [리포트 원문 내용]
-        {report_context}
-        
-        [이전 대화 내역]
-        {history_text}
-        
-        가이드라인:
-        1. 리포트의 내용을 바탕으로 질문에 대해 구체적이고 전문적으로 답변하십시오.
-        2. 리포트에 언급된 특정 용어(예: '부당이득', '불법행위' 등)나 법리가 있다면 그 맥락을 유지하며 설명하십시오.
-        3. 이전 대화의 흐름이 있다면 이를 고려하여 답변하십시오.
-        4. 답변은 친절하고 정중한 전문 변호사의 어조를 유지하십시오.
-        """
-        
-        messages = [
-            SystemMessage(content=system_content),
-            HumanMessage(content=f"질문: {user_query}")
-        ]
-        
-        try:
-            response = await self.chat_llm.ainvoke(messages)
-            return {
-                "answer": self._normalize_content(response.content),
-                "model": self.chat_llm.model_name if hasattr(self.chat_llm, 'model_name') else self.chat_llm.model
-            }
-        except Exception as e:
-            print(f"Error in follow-up query: {e}")
-            raise e
-
     def get_article_text(self, law_name: str, article_no: str) -> Optional[str]:
         """
         Retrieve the full text of a specific article from a law.
@@ -547,97 +377,4 @@ class RAGEngine:
             print(f"Error deleting user upload {source_name}: {e}")
 
 
-class VisionEngine:
-    def __init__(self):
-        # Using gpt-4o-mini which supports multimodal
-        self.vision_llm = ChatOpenAI(
-            model="gpt-4o-mini", 
-            temperature=0,
-            api_key=OPENAI_API_KEY,
-            base_url=AI_GATEWAY_URL
-        )
-
-    async def analyze_contract_document(self, image_bytes: Optional[bytes] = None, text_content: Optional[str] = None, user_description: str = "") -> Dict[str, Any]:
-        """
-        Analyze a contract document (Image or PDF text) using Gemini.
-        Identifies toxic clauses and missing items.
-        """
-        content_parts = []
-        
-        system_msg = SystemMessage(content=f"""
-        당신은 대한민국 전문 변호사입니다. 제공된 계약서(또는 법률 문서)를 정밀 분석하여 다음 정보를 추출하고 분석하십시오.
-
-        분석 요구사항:
-        1. **문서 종류 식별**: 이 문서가 어떤 종류의 계약서인지 파악하십시오.
-        2. **독소 조항(Toxic Clauses) 추출**: 사용자에게 일방적으로 불리하거나, 법적으로 문제가 될 소지가 있는 조항을 모두 찾아내어 설명하십시오.
-        3. **누락된 필수 항목**: 해당 계약 종류에서 통상적으로 포함되어야 하나 누락된 중요한 항목이 있다면 지적하십시오.
-        4. **종합 의견 및 권고 사항**: 이 계약을 체결할 때 주의해야 할 점과 수정 제안을 제공하십시오.
-
-        출력 형식 (JSON):
-        {{
-            "document_type": "문서 종류",
-            "toxic_clauses": [
-                {{"clause": "조항 내용 (또는 위치)", "reason": "불리하거나 위험한 이유", "suggestion": "수정 제안"}}
-            ],
-            "missing_items": ["누락된 항목 1", "누락된 항목 2"],
-            "overall_opinion": "종합적인 변호사 의견",
-            "risk_level": "고/중/저"
-        }}
-
-        반드시 유효한 JSON 형식으로만 답변하십시오. 한국어로 작성하십시오.
-        """)
-
-        human_text = f"사용자 추가 설명: {user_description if user_description else '없음'}"
-        if text_content:
-            human_text += f"\n\n[계약서 텍스트 내용]\n{text_content}"
-
-        content_parts = [{"type": "text", "text": human_text}]
-
-        if image_bytes:
-            # Convert image bytes to base64
-            image_base64 = base64.b64encode(image_bytes).decode("utf-8")
-            content_parts.append({
-                "type": "image_url",
-                "image_url": {"url": f"data:image/jpeg;base64,{image_base64}"},
-            })
-
-        messages = [
-            system_msg,
-            HumanMessage(content=content_parts)
-        ]
-
-        try:
-            response = await self.vision_llm.ainvoke(messages)
-            content = self._normalize_json_content(response.content)
-            import json
-            return json.loads(content)
-        except Exception as e:
-            print(f"Error in VisionEngine analysis: {e}")
-            return {
-                "error": "문서 분석 중 오류가 발생했습니다.",
-                "detail": str(e)
-            }
-
-    def _normalize_json_content(self, content: Any) -> str:
-        """
-        Extract JSON block from LLM response if present.
-        """
-        if isinstance(content, list):
-            text_parts = []
-            for part in content:
-                if isinstance(part, str):
-                    text_parts.append(part)
-                elif isinstance(part, dict):
-                    text_parts.append(part.get("text", str(part)))
-                else:
-                    text_parts.append(str(part))
-            content = "".join(text_parts)
-
-        if "```json" in content:
-            content = content.split("```json")[1].split("```")[0].strip()
-        elif "```" in content:
-            content = content.split("```")[1].split("```")[0].strip()
-        return content.strip()
-
 rag_engine = RAGEngine()
-vision_engine = VisionEngine()
