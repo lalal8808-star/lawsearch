@@ -144,7 +144,7 @@ async def sync_user(
         logger.error(f"DEBUG: Token validation failed in sync: {e}")
         raise HTTPException(status_code=401, detail="Invalid token")
 
-    logger.info(f"DEBUG: /auth/sync received for supabase_id={request.supabase_id}, email={request.username}")
+    logger.debug(f"DEBUG: /auth/sync received for supabase_id={request.supabase_id}, email={request.username}")
     
     # 1. 먼저 supabase_id로 검색
     user = db.query(User).filter(User.supabase_id == request.supabase_id).first()
@@ -154,13 +154,13 @@ async def sync_user(
         user = db.query(User).filter(User.username == request.username).first()
         if user:
             # 기존 유저가 있으면 supabase_id만 연결 (업데이트)
-            logger.info(f"DEBUG: Linking existing legacy user {user.username} to supabase_id {request.supabase_id}")
+            logger.debug(f"DEBUG: Linking existing legacy user {user.username} to supabase_id {request.supabase_id}")
             user.supabase_id = request.supabase_id
             if request.nickname:
                 user.nickname = request.nickname
         else:
             # 3. 둘 다 없으면 완전히 새로운 유저 생성
-            logger.info(f"DEBUG: Creating new user record for {request.username}")
+            logger.debug(f"DEBUG: Creating new user record for {request.username}")
             user = User(
                 supabase_id=request.supabase_id,
                 username=request.username,
@@ -353,7 +353,7 @@ async def query_ai(
     db: Session = Depends(get_db), 
     current_user: Optional[User] = Depends(auth.get_current_user_optional) # Custom optional helper
 ):
-    logger.info(f"DEBUG: /query received. user={'Anonymous' if not current_user else current_user.username}")
+    logger.debug(f"DEBUG: /query received. user={'Anonymous' if not current_user else current_user.username}")
     try:
         # 1. Autonomous Syncing Logic
         required_laws = await rag_engine.detect_required_laws(query)
@@ -417,10 +417,10 @@ async def query_ai(
         
         # 3. Save to history if logged in AND intent is REPORT
         intent = result.get("intent", "").upper()
-        logger.info(f"DEBUG: Query result intent={intent}, user_logged_in={current_user is not None}")
+        logger.debug(f"DEBUG: Query result intent={intent}, user_logged_in={current_user is not None}")
         
         if current_user and intent == "REPORT":
-            logger.info(f"DEBUG: Saving report to history for user_id={current_user.id}")
+            logger.debug(f"DEBUG: Saving report to history for user_id={current_user.id}")
             new_report = Report(
                 user_id=current_user.id,
                 query=query,
@@ -433,14 +433,14 @@ async def query_ai(
                 db.commit()
                 db.refresh(new_report)
                 result["report_id"] = new_report.id
-                logger.info(f"DEBUG: Report saved successfully with id={new_report.id}")
+                logger.debug(f"DEBUG: Report saved successfully with id={new_report.id}")
             except Exception as save_err:
                 logger.error(f"DEBUG: Database SAVE ERROR: {save_err}")
                 db.rollback()
         elif intent == "REPORT" and not current_user:
             logger.info("DEBUG: Intent is REPORT but user not logged in. skipping save.")
         elif current_user and intent != "REPORT":
-            logger.info(f"DEBUG: User logged in but intent {intent} is not REPORT. skipping save.")
+            logger.debug(f"DEBUG: User logged in but intent {intent} is not REPORT. skipping save.")
 
         return result
     except Exception as e:
@@ -633,12 +633,12 @@ async def report_followup_chat(
     current_user: User = Depends(auth.get_current_user),
     db: Session = Depends(get_db)
 ):
-    logger.info(f"DEBUG: report_followup_chat received. report_id={report_id}, query={query}")
+    logger.debug(f"DEBUG: report_followup_chat received. report_id={report_id}, query={query}")
     if not current_user:
         logger.info("DEBUG: No current user found (Unauthorized)")
         raise HTTPException(status_code=401, detail="Authentication required")
         
-    logger.info(f"DEBUG: Authenticated user_id={current_user.id}")
+    logger.debug(f"DEBUG: Authenticated user_id={current_user.id}")
     report = db.query(Report).filter(Report.id == report_id).first()
     
     if not report:
@@ -653,7 +653,7 @@ async def report_followup_chat(
     report_context = report.answer
     chat_history = report.chat_history or []
     
-    logger.info(f"DEBUG: Invoking RAG engine for followup. Context length={len(report_context)}")
+    logger.debug(f"DEBUG: Invoking RAG engine for followup. Context length={len(report_context)}")
     result = await rag_engine.query_followup(query, report_context, chat_history)
     
     # Update history in DB
@@ -664,7 +664,7 @@ async def report_followup_chat(
     report.chat_history = new_history
     try:
         db.commit()
-        logger.info(f"DEBUG: Chat history updated for report {report_id}")
+        logger.debug(f"DEBUG: Chat history updated for report {report_id}")
     except Exception as e:
         logger.error(f"DEBUG: Failed to commit chat history update: {e}")
         db.rollback()
