@@ -535,6 +535,16 @@ async def query_context(
                 metadata['similarity'] = sim
                 docs.append(Document(page_content=content, metadata=metadata))
 
+        # 업로드 자료 관련성 2차 판단: 임베딩 유사도로는 같은 도메인(변전 vs 지중송전)을
+        # 못 가르므로, 후보 업로드 파일 제목을 LLM에게 물어 질문과 무관한 자료는 제외한다.
+        upload_sources = {d.metadata.get("source") for d in docs if d.metadata.get("type") == "user_upload"}
+        if upload_sources:
+            relevant = await rag_engine.filter_relevant_uploads(query, list(upload_sources))
+            before = len(docs)
+            docs = [d for d in docs
+                    if d.metadata.get("type") != "user_upload" or d.metadata.get("source") in relevant]
+            logger.info(f"[query-context] upload relevance filter kept={relevant} docs {before}->{len(docs)}")
+
         # 키워드 겹침 + 유사도로 재정렬한 뒤 상위 15개 선택
         # (정렬 전에 자르면 법령이 업로드 청크에 밀려 잘리므로 반드시 정렬 후 슬라이스)
         for doc in docs:

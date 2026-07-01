@@ -2,6 +2,7 @@ import os
 import re
 import asyncio
 import base64
+import logging
 from dotenv import load_dotenv
 from langchain_google_genai import GoogleGenerativeAIEmbeddings, ChatGoogleGenerativeAI
 from langchain_openai import ChatOpenAI
@@ -12,6 +13,8 @@ from typing import List, Dict, Any, Optional
 from supabase.client import create_client, Client
 
 load_dotenv()
+
+logger = logging.getLogger(__name__)
 
 # RAG and Vector DB Configuration
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
@@ -257,6 +260,38 @@ class RAGEngine:
         except Exception as e:
             print(f"Error in detect_intent: {e}")
             return "REPORT"
+
+    async def filter_relevant_uploads(self, user_query: str, sources: List[str]) -> set:
+        """
+        업로드 자료(파일 제목)가 질문과 직접 관련 있는지 LLM으로 판단한다.
+        임베딩 유사도만으로는 같은 도메인(예: '변전공사' vs '지중송전')이 0.7로 붙어버려
+        구분이 안 되므로, 제목 기반으로 LLM이 주제 일치를 판단하게 한다.
+        관련된 source 이름 집합을 반환(무관하면 빈 집합).
+        """
+        sources = list(dict.fromkeys([s for s in sources if s]))  # 중복 제거(순서 유지)
+        if not sources:
+            return set()
+        listing = "\n".join(f"{i+1}. {s}" for i, s in enumerate(sources))
+        messages = [
+            SystemMessage(content=(
+                "사용자 질문과 첨부 자료 제목 목록이 주어진다. 질문에 직접 관련된 자료의 번호만 "
+                "쉼표로 답하라. 주제가 다르면(예: 질문은 '변전공사'인데 자료는 '지중송전 관련') 제외한다. "
+                "관련된 것이 하나도 없으면 'None'만 답하라. 다른 설명은 하지 마라."
+            )),
+            HumanMessage(content=f"질문: {user_query}\n\n자료 목록:\n{listing}")
+        ]
+        try:
+            response = await self.chat_llm.ainvoke(messages)
+            content = self._normalize_content(response.content).strip()
+            if "none" in content.lower():
+                return set()
+            nums = [int(n) for n in re.findall(r'\d+', content)]
+            relevant = {sources[n - 1] for n in nums if 1 <= n <= len(sources)}
+            logger.info(f"[relevance] query='{user_query[:40]}' relevant_uploads={relevant}")
+            return relevant
+        except Exception as e:
+            print(f"Error in filter_relevant_uploads: {e}")
+            return set(sources)  # 판단 실패 시 관련 데이터 유실 방지 위해 유지(유사도 게이트는 이미 적용됨)
 
     async def query(self, user_query: str, target_laws: List[str] = None, current_user_id: Optional[int] = None) -> Dict[str, Any]:
         """
