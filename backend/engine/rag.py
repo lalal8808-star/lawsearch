@@ -246,17 +246,22 @@ class RAGEngine:
         """
         Classify query as CHAT or REPORT (using ainvoke).
         """
+        system = (
+            "사용자 메시지를 'CHAT' 또는 'REPORT' 한 단어로만 분류하라.\n"
+            "- REPORT: 법률 자문·분석·검토가 필요한 실질적 질문(사건, 절차, 기준, 요건, 인허가, "
+            "책임, 제재, 계약, 권리 등). 짧아도 법적 판단이 필요하면 REPORT.\n"
+            "- CHAT: 단순 인사, 잡담, 서비스 사용법, 매우 짧은 후속 확인 등 법적 분석이 불필요한 경우.\n"
+            "오직 한 단어(CHAT 또는 REPORT)만 답하라."
+        )
         messages = [
-            SystemMessage(content="질문을 분석하여 'CHAT' 또는 'REPORT'로 분류하십시오. 오직 단어 하나만 반환."),
-            HumanMessage(content=f"질문: {user_query}")
+            SystemMessage(content=system),
+            HumanMessage(content=f"메시지: {user_query}")
         ]
         try:
             response = await self.chat_llm.ainvoke(messages)
             content = self._normalize_content(response.content).strip().upper()
-            logger.info(f"DEBUG: detect_intent LLM output='{content}' for query='{user_query[:50]}...'")
-            # Be more flexible: if it looks like a report request, it's a report
-            is_report = "REPORT" in content or "REPORT" in user_query.upper() or len(user_query) > 20
-            return "REPORT" if is_report else "CHAT"
+            logger.info(f"detect_intent LLM output='{content}' for query='{user_query[:50]}'")
+            return "REPORT" if "REPORT" in content else "CHAT"
         except Exception as e:
             print(f"Error in detect_intent: {e}")
             return "REPORT"
