@@ -1,4 +1,5 @@
 import os
+import logging
 from datetime import datetime, timedelta
 from typing import Optional
 import jwt
@@ -24,7 +25,20 @@ SUPABASE_URL = os.getenv("SUPABASE_URL", "https://cihzxfxtxpgdvebupeua.supabase.
 SUPABASE_JWT_SECRET = os.getenv("SUPABASE_JWT_SECRET")
 
 ALGORITHMS = ["HS256", "HS384", "HS512", "RS256", "ES256"]
+# 대칭키(SUPABASE_JWT_SECRET / SECRET_KEY)로 검증할 때는 HMAC 알고리즘만 허용한다.
+# (RS256/ES256을 대칭키로 검증하도록 허용하면 알고리즘 혼동 공격 표면이 생긴다)
+HMAC_ALGORITHMS = ["HS256", "HS384", "HS512"]
 ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24 * 7 # 1 week
+
+logger = logging.getLogger(__name__)
+
+# 모듈 레벨 공용 401 (get_current_user 등에서 재사용). 이전엔 decode_token_payload 내부
+# 지역변수라 get_current_user에서 raise 시 NameError→500이 났다.
+credentials_exception = HTTPException(
+    status_code=status.HTTP_401_UNAUTHORIZED,
+    detail="Could not validate credentials",
+    headers={"WWW-Authenticate": "Bearer"},
+)
 
 ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24 * 7 # 1 week
 
@@ -125,14 +139,14 @@ def decode_token_payload(token: str) -> dict:
                 signing_key = jwks_client.get_signing_key_from_jwt(token)
                 payload = jwt.decode(token, signing_key.key, algorithms=["ES256"], audience="authenticated")
             else:
-                payload = jwt.decode(token, SUPABASE_JWT_SECRET, algorithms=ALGORITHMS, audience="authenticated")
+                payload = jwt.decode(token, SUPABASE_JWT_SECRET, algorithms=HMAC_ALGORITHMS, audience="authenticated")
         except jwt.InvalidAudienceError:
             try:
                 if alg == "ES256":
                     signing_key = jwks_client.get_signing_key_from_jwt(token)
                     payload = jwt.decode(token, signing_key.key, algorithms=["ES256"])
                 else:
-                    payload = jwt.decode(token, SUPABASE_JWT_SECRET, algorithms=ALGORITHMS)
+                    payload = jwt.decode(token, SUPABASE_JWT_SECRET, algorithms=HMAC_ALGORITHMS)
             except Exception:
                 pass
         except Exception:
@@ -141,7 +155,7 @@ def decode_token_payload(token: str) -> dict:
     # 2. Try Legacy Secret
     if payload is None:
         try:
-            payload = jwt.decode(token, SECRET_KEY, algorithms=ALGORITHMS)
+            payload = jwt.decode(token, SECRET_KEY, algorithms=HMAC_ALGORITHMS)
         except Exception:
             raise credentials_exception
             
@@ -177,7 +191,7 @@ async def get_current_user(
         user = db.query(User).filter(User.username == sub).first()
         
     if user is None:
-        print(f"DEBUG: get_current_user FAILED. User with sub/username '{sub}' not found in database.")
+        logger.debug("get_current_user: no matching user for token subject")
         raise credentials_exception
         
     return user
@@ -210,21 +224,21 @@ async def get_current_user_optional(request: Request, db: Session = Depends(get_
                     signing_key = jwks_client.get_signing_key_from_jwt(token)
                     payload = jwt.decode(token, signing_key.key, algorithms=["ES256"], audience="authenticated")
                 else:
-                    payload = jwt.decode(token, SUPABASE_JWT_SECRET, algorithms=ALGORITHMS, audience="authenticated")
+                    payload = jwt.decode(token, SUPABASE_JWT_SECRET, algorithms=HMAC_ALGORITHMS, audience="authenticated")
             except Exception:
                 try:
                     if alg == "ES256":
                         signing_key = jwks_client.get_signing_key_from_jwt(token)
                         payload = jwt.decode(token, signing_key.key, algorithms=["ES256"])
                     else:
-                        payload = jwt.decode(token, SUPABASE_JWT_SECRET, algorithms=ALGORITHMS)
+                        payload = jwt.decode(token, SUPABASE_JWT_SECRET, algorithms=HMAC_ALGORITHMS)
                 except Exception:
                     payload = None
                     
         # 2. Try Legacy
         if payload is None:
             try:
-                payload = jwt.decode(token, SECRET_KEY, algorithms=ALGORITHMS)
+                payload = jwt.decode(token, SECRET_KEY, algorithms=HMAC_ALGORITHMS)
             except Exception:
                 return None
                 

@@ -57,7 +57,9 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,
     # 이 프로젝트의 Vercel 프리뷰/브랜치 배포 URL(예: lawsearch-<hash>-...vercel.app)도 허용
-    allow_origin_regex=r"https://lawsearch-[a-z0-9-]+\.vercel\.app",
+    # 정식 도메인 + 이 팀(jongwha-ims-projects)의 프리뷰/프로덕션 배포만 허용한다.
+    # (기존 lawsearch-*.vercel.app 정규식은 제3자의 lawsearch-evil.vercel.app 까지 허용됐음)
+    allow_origin_regex=r"https://(lawsearch-seven|lawsearch-[a-z0-9-]+-jongwha-ims-projects)\.vercel\.app",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -78,10 +80,13 @@ async def signup(
     nickname: str = Form(...), 
     db: Session = Depends(get_db)
 ):
+    if len(password) < 8:
+        raise HTTPException(status_code=400, detail="비밀번호는 최소 8자 이상이어야 합니다.")
+
     db_user = db.query(User).filter(User.username == username).first()
     if db_user:
         raise HTTPException(status_code=400, detail="Username already registered")
-    
+
     hashed_password = auth.get_password_hash(password)
     new_user = User(username=username, nickname=nickname, hashed_password=hashed_password)
     db.add(new_user)
@@ -183,9 +188,9 @@ async def sync_user(
         db.commit()
         db.refresh(user)
     except Exception as e:
-        logger.error(f"DEBUG: Sync failed: {e}")
+        logger.error(f"Sync failed: {e}")
         db.rollback()
-        raise HTTPException(status_code=500, detail=f"Sync failed: {str(e)}")
+        raise HTTPException(status_code=500, detail="Sync failed")
         
     return {"status": "synced", "nickname": user.nickname}
 
@@ -416,7 +421,7 @@ async def query_context(
         }
     except Exception as e:
         logger.error(f"Error in query-context: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="컨텍스트 생성 중 오류가 발생했습니다.")
 
 # --- History Endpoints ---
 
