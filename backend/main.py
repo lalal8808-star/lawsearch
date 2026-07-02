@@ -1,4 +1,4 @@
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Depends, Request, BackgroundTasks
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Depends, Request, BackgroundTasks, Response
 import os
 import re
 import logging
@@ -422,6 +422,49 @@ async def query_context(
     except Exception as e:
         logger.error(f"Error in query-context: {e}")
         raise HTTPException(status_code=500, detail="컨텍스트 생성 중 오류가 발생했습니다.")
+
+# --- HWPX 내보내기 ---
+
+class ExportRequest(BaseModel):
+    reportId: Optional[str] = None
+    query: Optional[str] = None
+    answer: str
+    sources: Optional[List[dict]] = None
+
+def _clean_line(line: str) -> str:
+    line = re.sub(r'^\s*#{1,6}\s*', '', line)   # 마크다운 헤더 마커 제거
+    line = line.replace('**', '')               # 볼드 마커 제거
+    return line
+
+@app.post("/export/hwpx")
+async def export_hwpx(payload: ExportRequest, current_user: User = Depends(auth.get_current_user)):
+    """보고서를 한글(HWPX) 파일로 생성해 다운로드로 반환한다."""
+    from hwpx import HwpxDocument
+    from urllib.parse import quote
+
+    doc = HwpxDocument.new()
+    doc.add_paragraph("법률 자문 보고서")
+    if payload.query:
+        doc.add_paragraph("")
+        doc.add_paragraph(f"[질의] {payload.query}")
+    doc.add_paragraph("")
+    for line in (payload.answer or "").split("\n"):
+        doc.add_paragraph(_clean_line(line))
+    if payload.sources:
+        doc.add_paragraph("")
+        doc.add_paragraph("[참고 자료]")
+        for s in payload.sources:
+            name = (s or {}).get("source", "")
+            if name:
+                doc.add_paragraph(f"- {name}")
+
+    data = doc.to_bytes()
+    filename = f"{payload.reportId or 'report'}.hwpx"
+    return Response(
+        content=data,
+        media_type="application/octet-stream",
+        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote(filename)}"},
+    )
 
 # --- Citation Verification (환각 검증) ---
 

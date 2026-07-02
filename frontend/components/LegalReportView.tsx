@@ -274,6 +274,27 @@ export default function LegalReportView({ reportId, query, answer, sources, engi
         URL.revokeObjectURL(url);
     };
 
+    // 보고서를 한글(.hwpx)로 내보낸다. 백엔드(python-hwpx)가 생성한 파일을 받아 다운로드.
+    const handleExportHwpx = async () => {
+        try {
+            const res = await api.post(
+                "/export/hwpx",
+                { reportId: reportId?.toString(), query, answer, sources },
+                { responseType: "blob" }
+            );
+            const url = URL.createObjectURL(res.data);
+            const a = document.createElement("a");
+            a.href = url;
+            a.download = `${reportId || "report"}.hwpx`;
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+            URL.revokeObjectURL(url);
+        } catch (e) {
+            alert("HWP 파일 생성에 실패했습니다.");
+        }
+    };
+
     if (!mounted) return <div className="min-h-screen bg-[#f8fafc] animate-pulse" />;
 
     return (
@@ -318,6 +339,13 @@ export default function LegalReportView({ reportId, query, answer, sources, engi
                                 className="flex items-center justify-center gap-2 px-6 py-3 md:py-2 bg-blue-600 text-white hover:bg-blue-700 rounded-xl transition-all text-sm font-bold shadow-lg shadow-blue-600/20"
                             >
                                 <BookmarkCheck size={16} aria-hidden="true" /> 법령 구독 관리 (Legal Watch)
+                            </button>
+                            <button
+                                aria-label="리포트 HWP 저장"
+                                onClick={handleExportHwpx}
+                                className="flex items-center justify-center gap-2 px-6 py-3 md:py-2 bg-sky-600 text-white hover:bg-sky-700 rounded-xl transition-all text-sm font-bold shadow-lg shadow-sky-600/20"
+                            >
+                                <FileText size={16} aria-hidden="true" /> HWP 저장
                             </button>
                             <button
                                 aria-label="리포트 Word 저장"
