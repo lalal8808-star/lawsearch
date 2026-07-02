@@ -1,6 +1,6 @@
 "use client";
 
-import { Scale, HelpCircle, ShieldCheck, Zap, Printer, Download, BookOpen, Loader2, X, Info, MessageCircle, MessageSquare, Bookmark, BookmarkPlus, BookmarkCheck, AlertCircle, Upload, ExternalLink } from "lucide-react";
+import { Scale, HelpCircle, ShieldCheck, Zap, Printer, Download, BookOpen, Loader2, X, Info, MessageCircle, MessageSquare, Bookmark, BookmarkPlus, BookmarkCheck, AlertCircle, Upload, ExternalLink, FileText } from "lucide-react";
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import axios from "axios";
@@ -191,6 +191,73 @@ export default function LegalReportView({ reportId, query, answer, sources, engi
         window.print();
     };
 
+    // 보고서를 Word(.docx)로 내보낸다. HWP도 .docx를 열 수 있어 실무 편집에 쓰기 좋다.
+    // docx는 용량이 커서 클릭 시점에 동적 import → 초기 번들에 포함되지 않는다.
+    const handleExportDocx = async () => {
+        const { Document, Packer, Paragraph, HeadingLevel, TextRun } = await import("docx");
+        const P = (text: string) => new Paragraph({ text });
+        const body: any[] = [];
+
+        body.push(new Paragraph({ text: visionData ? "계약서 분석 보고서" : "법률 자문 보고서", heading: HeadingLevel.TITLE }));
+        body.push(new Paragraph({ children: [new TextRun({ text: `#${reportId}  ·  ${new Date().toLocaleDateString()}${engine ? "  ·  " + engine : ""}`, italics: true, color: "888888" })] }));
+        body.push(P(""));
+
+        if (query) {
+            body.push(new Paragraph({ text: "질의 내용", heading: HeadingLevel.HEADING_1 }));
+            body.push(P(query));
+            body.push(P(""));
+        }
+
+        const addSection = (title: string, content?: string) => {
+            if (!content || !content.trim()) return;
+            body.push(new Paragraph({ text: title, heading: HeadingLevel.HEADING_1 }));
+            content.split("\n").forEach((line) => body.push(P(line)));
+            body.push(P(""));
+        };
+
+        if (visionData) {
+            addSection("문서 종류", visionData.document_type);
+            addSection("위험도", visionData.risk_level);
+            if (Array.isArray(visionData.toxic_clauses) && visionData.toxic_clauses.length) {
+                body.push(new Paragraph({ text: "독소 조항", heading: HeadingLevel.HEADING_1 }));
+                visionData.toxic_clauses.forEach((c: any) => {
+                    body.push(P(`• ${c.clause || ""}`));
+                    if (c.reason) body.push(P(`   - 이유: ${c.reason}`));
+                    if (c.suggestion) body.push(P(`   - 수정 제안: ${c.suggestion}`));
+                });
+                body.push(P(""));
+            }
+            if (Array.isArray(visionData.missing_items) && visionData.missing_items.length) {
+                addSection("누락된 필수 항목", visionData.missing_items.map((m: string) => `• ${m}`).join("\n"));
+            }
+            addSection("종합 의견", visionData.overall_opinion);
+        } else {
+            addSection("사건 개요", sections.overview);
+            addSection("법률 분석", sections.analysis);
+            addSection("핵심 결론", sections.conclusion);
+            addSection("향후 조치", sections.action);
+            if (!sections.overview && !sections.analysis && !sections.conclusion && !sections.action) {
+                addSection("내용", cleanContent(answer));
+            }
+        }
+
+        if (sources && sources.length) {
+            body.push(new Paragraph({ text: "참고 자료", heading: HeadingLevel.HEADING_1 }));
+            sources.forEach((s) => body.push(P(`• ${s.source}${s.type === "user_upload" ? " (내 업로드 자료)" : ""}`)));
+        }
+
+        const doc = new Document({ sections: [{ children: body }] });
+        const blob = await Packer.toBlob(doc);
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = `${reportId || "report"}.docx`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(url);
+    };
+
     if (!mounted) return <div className="min-h-screen bg-[#f8fafc] animate-pulse" />;
 
     return (
@@ -235,6 +302,13 @@ export default function LegalReportView({ reportId, query, answer, sources, engi
                                 className="flex items-center justify-center gap-2 px-6 py-3 md:py-2 bg-blue-600 text-white hover:bg-blue-700 rounded-xl transition-all text-sm font-bold shadow-lg shadow-blue-600/20"
                             >
                                 <BookmarkCheck size={16} aria-hidden="true" /> 법령 구독 관리 (Legal Watch)
+                            </button>
+                            <button
+                                aria-label="리포트 Word 저장"
+                                onClick={handleExportDocx}
+                                className="flex items-center justify-center gap-2 px-6 py-3 md:py-2 bg-indigo-600 text-white hover:bg-indigo-700 rounded-xl transition-all text-sm font-bold shadow-lg shadow-indigo-600/20"
+                            >
+                                <FileText size={16} aria-hidden="true" /> Word 저장
                             </button>
                             <button
                                 aria-label="리포트 PDF 저장"
