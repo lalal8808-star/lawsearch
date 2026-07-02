@@ -80,10 +80,19 @@ export async function POST(req: Request) {
     }
 
     // 5. Vercel AI Gateway 경유 호출 (model 문자열만으로 자동 라우팅, 인증은 VERCEL_OIDC_TOKEN)
+    // 비용 통제: 사용자 단위 태깅으로 대시보드에서 사용량 추적·per-user 레이트리밋을 걸 수 있고,
+    // maxOutputTokens로 요청당 최대 출력을 제한해 폭주 비용을 막는다.
     const result = streamText({
       model: 'openai/gpt-5.5',
       system: systemInstruction,
       messages,
+      maxOutputTokens: ragIntent === 'REPORT' ? 8000 : 2000,
+      providerOptions: {
+        gateway: {
+          user: user.id,
+          tags: ['feature:chat', `intent:${(ragIntent || 'chat').toLowerCase()}`],
+        },
+      },
       onError({ error }) {
         console.error('AI SDK Stream Error Details:', error);
       }

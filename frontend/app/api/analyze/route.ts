@@ -130,6 +130,13 @@ export async function POST(req: Request) {
       model: 'openai/gpt-5.5',
       messages,
       temperature: 0,
+      maxOutputTokens: 4000,
+      providerOptions: {
+        gateway: {
+          user: user.id,
+          tags: ['feature:document-analysis'],
+        },
+      },
     });
 
     // 7. JSON 응답 추출 및 반환
