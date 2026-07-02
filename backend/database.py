@@ -91,6 +91,7 @@ class Report(Base):
     engine = Column(String, nullable=True)
     sources = Column(JSON) # Store as JSON list
     chat_history = Column(JSON, default=list) # Store list of {"role": "...", "content": "..."}
+    tags = Column(JSON, default=list) # 사용자 태그 목록 (폴더는 태그로 대체)
     created_at = Column(DateTime, default=datetime.utcnow)
 
     owner = relationship("User", back_populates="reports")
@@ -135,8 +136,26 @@ class APIKey(Base):
 
     owner = relationship("User", back_populates="api_keys")
 
+def run_migrations():
+    """기존 테이블에 새 컬럼을 idempotent하게 추가한다(create_all은 컬럼 추가를 안 함).
+    실패해도 부팅을 막지 않도록 예외를 삼킨다."""
+    try:
+        from sqlalchemy import inspect as sa_inspect, text
+        insp = sa_inspect(engine)
+        if "reports" in insp.get_table_names():
+            cols = [c["name"] for c in insp.get_columns("reports")]
+            if "tags" not in cols:
+                coltype = "JSONB" if engine.dialect.name == "postgresql" else "TEXT"
+                with engine.begin() as conn:
+                    conn.execute(text(f"ALTER TABLE reports ADD COLUMN tags {coltype}"))
+                print(f"Migration: added reports.tags ({coltype})")
+    except Exception as e:
+        print(f"Migration warning (reports.tags): {e}")
+
+
 def init_db():
     Base.metadata.create_all(bind=engine)
+    run_migrations()
 
 def get_db():
     db = SessionLocal()

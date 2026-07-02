@@ -530,6 +530,30 @@ async def delete_report(report_id: int, current_user: User = Depends(auth.get_cu
     db.commit()
     return {"message": "Report deleted successfully"}
 
+class UpdateTagsRequest(BaseModel):
+    tags: List[str]
+
+@app.patch("/history/{report_id}/tags")
+async def update_report_tags(
+    report_id: int,
+    payload: UpdateTagsRequest,
+    current_user: User = Depends(auth.get_current_user),
+    db: Session = Depends(get_db)
+):
+    report = db.query(Report).filter(Report.id == report_id, Report.user_id == current_user.id).first()
+    if not report:
+        raise HTTPException(status_code=404, detail="Report not found")
+    clean = []
+    for t in (payload.tags or []):
+        t = (t or "").strip()[:30]
+        if t and t not in clean:
+            clean.append(t)
+        if len(clean) >= 10:
+            break
+    report.tags = clean
+    db.commit()
+    return {"id": report.id, "tags": clean}
+
 # --- Legal Watch Endpoints ---
 
 @app.get("/subscriptions")

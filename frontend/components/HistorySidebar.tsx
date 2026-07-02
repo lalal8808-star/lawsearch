@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { History, Trash2, FileText, ChevronLeft, ChevronRight, Scale, Clock, ExternalLink, Search, X } from "lucide-react";
+import { History, Trash2, FileText, ChevronLeft, ChevronRight, Scale, Clock, ExternalLink, Search, X, Tag } from "lucide-react";
 import api from "@/utils/api";
 import { useAuth } from "@/context/AuthContext";
 
@@ -12,6 +12,7 @@ export default function HistorySidebar() {
     const [loading, setLoading] = useState(false);
     const [mounted, setMounted] = useState(false);
     const [search, setSearch] = useState("");
+    const [activeTag, setActiveTag] = useState<string | null>(null);
     const { user, token } = useAuth();
 
     useEffect(() => {
@@ -57,6 +58,29 @@ export default function HistorySidebar() {
         }
     };
 
+    const patchTags = async (report: any, newTags: string[]) => {
+        try {
+            const res = await api.patch(`/history/${report.id}/tags`, { tags: newTags });
+            setReports((prev) => prev.map((r) => (r.id === report.id ? { ...r, tags: res.data.tags } : r)));
+        } catch (e) {
+            alert("태그 업데이트에 실패했습니다.");
+        }
+    };
+
+    const addTag = (report: any, e: React.MouseEvent) => {
+        e.stopPropagation();
+        const t = prompt("태그 입력:")?.trim();
+        if (!t) return;
+        const cur: string[] = report.tags || [];
+        if (cur.includes(t)) return;
+        patchTags(report, [...cur, t]);
+    };
+
+    const removeTag = (report: any, tag: string, e: React.MouseEvent) => {
+        e.stopPropagation();
+        patchTags(report, (report.tags || []).filter((x: string) => x !== tag));
+    };
+
     const openReport = (report: any) => {
         sessionStorage.setItem("jonglaw_last_report", JSON.stringify({
             reportId: report.id.toString(),
@@ -72,11 +96,12 @@ export default function HistorySidebar() {
     if (!mounted || !user) return null;
 
     const q = search.trim().toLowerCase();
-    const filtered = q
-        ? reports.filter((r) =>
-            (r.query || "").toLowerCase().includes(q) ||
-            (r.answer || "").toLowerCase().includes(q))
-        : reports;
+    const filtered = reports.filter((r) => {
+        if (activeTag && !(r.tags || []).includes(activeTag)) return false;
+        if (q && !((r.query || "").toLowerCase().includes(q) || (r.answer || "").toLowerCase().includes(q))) return false;
+        return true;
+    });
+    const allTags = Array.from(new Set(reports.flatMap((r) => r.tags || []))) as string[];
 
     return (
         <div className="relative h-full hidden lg:flex items-start">
@@ -115,6 +140,25 @@ export default function HistorySidebar() {
                                 </button>
                             )}
                         </div>
+
+                        {allTags.length > 0 && (
+                            <div className="flex flex-wrap gap-1.5 mt-3">
+                                {allTags.map((t) => (
+                                    <button
+                                        key={t}
+                                        onClick={() => setActiveTag(activeTag === t ? null : t)}
+                                        className={`px-2 py-0.5 rounded-full text-[10px] font-bold transition-all border ${activeTag === t ? "bg-primary text-white border-primary" : "bg-white/5 text-muted border-white/10 hover:border-primary/40"}`}
+                                    >
+                                        #{t}
+                                    </button>
+                                ))}
+                                {activeTag && (
+                                    <button onClick={() => setActiveTag(null)} className="px-2 py-0.5 rounded-full text-[10px] font-bold text-muted hover:text-white flex items-center gap-1">
+                                        <X size={10} /> 해제
+                                    </button>
+                                )}
+                            </div>
+                        )}
                     </div>
                 )}
 
@@ -144,6 +188,26 @@ export default function HistorySidebar() {
                                     <p className="text-xs font-semibold leading-relaxed line-clamp-2 pr-6">
                                         "{report.query}"
                                     </p>
+                                    <div className="flex flex-wrap items-center gap-1">
+                                        {(report.tags || []).map((t: string) => (
+                                            <span
+                                                key={t}
+                                                onClick={(e) => { e.stopPropagation(); setActiveTag(activeTag === t ? null : t); }}
+                                                className="group/tag inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[9px] font-bold bg-primary/15 text-primary hover:bg-primary/25 transition-all cursor-pointer"
+                                            >
+                                                #{t}
+                                                <button onClick={(e) => removeTag(report, t, e)} aria-label={`${t} 태그 삭제`} className="opacity-50 hover:opacity-100">
+                                                    <X size={9} />
+                                                </button>
+                                            </span>
+                                        ))}
+                                        <button
+                                            onClick={(e) => addTag(report, e)}
+                                            className="opacity-0 group-hover:opacity-100 inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-[9px] font-bold text-muted hover:text-primary border border-dashed border-white/15 transition-all"
+                                        >
+                                            <Tag size={9} /> 태그
+                                        </button>
+                                    </div>
                                     <div className="flex items-center justify-between">
                                         <div className="flex items-center gap-2 text-[9px] text-muted font-bold">
                                             <Clock size={10} />
