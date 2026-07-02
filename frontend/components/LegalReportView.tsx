@@ -1,6 +1,6 @@
 "use client";
 
-import { Scale, HelpCircle, ShieldCheck, Zap, Printer, Download, BookOpen, Loader2, X, Info, MessageCircle, MessageSquare, Bookmark, BookmarkPlus, BookmarkCheck, AlertCircle, Upload } from "lucide-react";
+import { Scale, HelpCircle, ShieldCheck, Zap, Printer, Download, BookOpen, Loader2, X, Info, MessageCircle, MessageSquare, Bookmark, BookmarkPlus, BookmarkCheck, AlertCircle, Upload, ExternalLink } from "lucide-react";
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import axios from "axios";
@@ -561,9 +561,22 @@ export default function LegalReportView({ reportId, query, answer, sources, engi
                                                                     <div className={`p-2 rounded-lg ${isUpload ? "bg-emerald-50 text-emerald-600" : isLaw ? "bg-blue-50 text-blue-500" : "bg-slate-50 text-slate-400"}`}>
                                                                         {isUpload ? <Upload size={18} /> : <Scale size={18} />}
                                                                     </div>
-                                                                    <div className="flex flex-col">
-                                                                        <span className="text-sm font-bold text-slate-800 tracking-tight">{src.source}</span>
-                                                                        <span className={`text-[10px] font-bold uppercase tracking-widest ${isUpload ? "text-emerald-600" : "text-slate-400"}`}>{isUpload ? "내 업로드 자료" : isLaw ? "Statute" : "Document"}</span>
+                                                                    <div className="flex flex-col min-w-0">
+                                                                        {isLaw ? (
+                                                                            <a
+                                                                                href={`https://www.law.go.kr/법령/${encodeURIComponent(cleanLawName)}`}
+                                                                                target="_blank"
+                                                                                rel="noopener noreferrer"
+                                                                                title="law.go.kr에서 원문 확인"
+                                                                                className="text-sm font-bold text-slate-800 tracking-tight hover:text-blue-600 hover:underline inline-flex items-center gap-1"
+                                                                            >
+                                                                                <span className="truncate">{src.source}</span>
+                                                                                <ExternalLink size={12} className="shrink-0 opacity-60" aria-hidden="true" />
+                                                                            </a>
+                                                                        ) : (
+                                                                            <span className="text-sm font-bold text-slate-800 tracking-tight">{src.source}</span>
+                                                                        )}
+                                                                        <span className={`text-[10px] font-bold uppercase tracking-widest ${isUpload ? "text-emerald-600" : isLaw ? "text-blue-500" : "text-slate-400"}`}>{isUpload ? "내 업로드 자료" : isLaw ? "법령 · 원문 보기" : "Document"}</span>
                                                                     </div>
                                                                 </div>
                                                                 {isLaw && user && (
