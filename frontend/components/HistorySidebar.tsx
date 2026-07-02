@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { History, Trash2, FileText, ChevronLeft, ChevronRight, Scale, Clock, ExternalLink } from "lucide-react";
+import { History, Trash2, FileText, ChevronLeft, ChevronRight, Scale, Clock, ExternalLink, Search, X } from "lucide-react";
 import api from "@/utils/api";
 import { useAuth } from "@/context/AuthContext";
 
@@ -11,6 +11,7 @@ export default function HistorySidebar() {
     const [isOpen, setIsOpen] = useState(true);
     const [loading, setLoading] = useState(false);
     const [mounted, setMounted] = useState(false);
+    const [search, setSearch] = useState("");
     const { user, token } = useAuth();
 
     useEffect(() => {
@@ -70,6 +71,13 @@ export default function HistorySidebar() {
 
     if (!mounted || !user) return null;
 
+    const q = search.trim().toLowerCase();
+    const filtered = q
+        ? reports.filter((r) =>
+            (r.query || "").toLowerCase().includes(q) ||
+            (r.answer || "").toLowerCase().includes(q))
+        : reports;
+
     return (
         <div className="relative h-full hidden lg:flex items-start">
             <motion.div
@@ -86,6 +94,30 @@ export default function HistorySidebar() {
                     {loading && <div className="w-4 h-4 border-2 border-primary border-t-transparent rounded-full animate-spin" />}
                 </div>
 
+                {reports.length > 0 && (
+                    <div className="px-4 pt-4 shrink-0">
+                        <div className="relative">
+                            <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted" />
+                            <input
+                                type="text"
+                                value={search}
+                                onChange={(e) => setSearch(e.target.value)}
+                                placeholder="보고서 검색..."
+                                className="w-full bg-white/5 border border-white/10 rounded-xl py-2 pl-9 pr-8 text-xs focus:outline-none focus:border-primary/50 transition-all"
+                            />
+                            {search && (
+                                <button
+                                    onClick={() => setSearch("")}
+                                    aria-label="검색어 지우기"
+                                    className="absolute right-2 top-1/2 -translate-y-1/2 text-muted hover:text-white p-1"
+                                >
+                                    <X size={12} />
+                                </button>
+                            )}
+                        </div>
+                    </div>
+                )}
+
                 <div className="flex-1 overflow-y-auto p-4 space-y-3 custom-scrollbar">
                     {reports.length === 0 ? (
                         <div className="h-full flex flex-col items-center justify-center opacity-30 text-center px-6">
@@ -93,8 +125,14 @@ export default function HistorySidebar() {
                             <p className="text-[10px] font-bold uppercase tracking-widest">No reports found.</p>
                             <p className="text-[9px] mt-2">질문을 남기고 전문가 보고서를 생성해보세요.</p>
                         </div>
+                    ) : filtered.length === 0 ? (
+                        <div className="h-full flex flex-col items-center justify-center opacity-30 text-center px-6">
+                            <Search size={32} className="mb-3" />
+                            <p className="text-[10px] font-bold uppercase tracking-widest">검색 결과 없음</p>
+                            <p className="text-[9px] mt-2">'{search}'와 일치하는 보고서가 없습니다.</p>
+                        </div>
                     ) : (
-                        reports.map((report) => (
+                        filtered.map((report) => (
                             <motion.div
                                 key={report.id}
                                 initial={{ opacity: 0, x: -20 }}
