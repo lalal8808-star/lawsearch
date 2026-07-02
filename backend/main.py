@@ -423,6 +423,64 @@ async def query_context(
         logger.error(f"Error in query-context: {e}")
         raise HTTPException(status_code=500, detail="컨텍스트 생성 중 오류가 발생했습니다.")
 
+# --- Citation Verification (환각 검증) ---
+
+CITATION_RE = re.compile(r'([가-힣]{2,20}(?:법률|법|령|규칙))\s*(제\d+조(?:의\d+)?)')
+
+class VerifyCitationsRequest(BaseModel):
+    text: str
+
+@app.post("/verify-citations")
+async def verify_citations(payload: VerifyCitationsRequest, current_user: User = Depends(auth.get_current_user)):
+    """보고서 본문의 '<법령명> 제N조' 인용을 law.go.kr 실제 조문과 대조해 환각을 검증한다."""
+    text = payload.text or ""
+    seen = set()
+    by_law = {}
+    for law, article in CITATION_RE.findall(text):
+        law = law.strip()
+        key = (law, article)
+        if key in seen:
+            continue
+        seen.add(key)
+        by_law.setdefault(law, []).append(article)
+
+    results = []
+    for law_name, articles in list(by_law.items())[:8]:  # 과도한 외부 호출 방지
+        try:
+            search = await law_client.search_laws(law_name)
+            law_list = search.get("law", [])
+            if isinstance(law_list, dict):
+                law_list = [law_list]
+            if not law_list:
+                for a in articles:
+                    results.append({"law": law_name, "article": a, "status": "law_not_found"})
+                continue
+            best = next((l for l in law_list if l.get("법령명한글") == law_name), law_list[0])
+            mst = best.get("법령일련번호")
+            actual_name = best.get("법령명한글", law_name)
+            detail = await law_client.get_law_detail(mst)
+            jo_list = detail.get("조문", {}).get("조문단위", [])
+            if isinstance(jo_list, dict):
+                jo_list = [jo_list]
+            article_set = set()
+            for jo in jo_list:
+                t = (jo.get("조문제목") or "") + " " + (jo.get("조문내용") or "")
+                m = re.search(r'제\d+조(?:의\d+)?', t)
+                if m:
+                    article_set.add(m.group(0))
+            for a in articles:
+                results.append({
+                    "law": actual_name,
+                    "article": a,
+                    "status": "verified" if a in article_set else "article_not_found",
+                    "url": f"https://www.law.go.kr/법령/{actual_name}",
+                })
+        except Exception as e:
+            logger.error(f"verify-citations error for {law_name}: {e}")
+            for a in articles:
+                results.append({"law": law_name, "article": a, "status": "error"})
+    return {"citations": results}
+
 # --- History Endpoints ---
 
 class SaveReportRequest(BaseModel):

@@ -35,13 +35,29 @@ export default function LegalReportView({ reportId, query, answer, sources, engi
     const { user } = useAuth();
     const [subscribedLaws, setSubscribedLaws] = useState<string[]>([]);
     const [submittingLaw, setSubmittingLaw] = useState<string | null>(null);
+    const [citations, setCitations] = useState<any[]>([]);
+    const [verifying, setVerifying] = useState(false);
 
     const [error, setError] = useState<string | null>(null);
+
+    const verifyCitations = async () => {
+        if (!answer || !answer.trim()) return;
+        setVerifying(true);
+        try {
+            const res = await api.post("/verify-citations", { text: answer });
+            setCitations(res.data?.citations || []);
+        } catch (e) {
+            console.error("Citation verification failed", e);
+        } finally {
+            setVerifying(false);
+        }
+    };
 
     useEffect(() => {
         setMounted(true);
         if (user) {
             fetchSubscriptions();
+            if (!visionData) verifyCitations();
         }
 
         // Set document title for PDF filename auto-generation
@@ -588,6 +604,46 @@ export default function LegalReportView({ reportId, query, answer, sources, engi
                                                     {renderContent(sections.action)}
                                                 </div>
                                             </div>
+                                        )}
+
+                                        {/* Citation Verification (환각 검증) */}
+                                        {(verifying || citations.length > 0) && (
+                                            <section className="space-y-4">
+                                                <div className="inline-flex items-center gap-2 px-3 py-1 bg-slate-100 rounded-lg text-slate-500 font-bold text-[11px] tracking-wider uppercase">
+                                                    <ShieldCheck size={14} className="text-slate-400" />
+                                                    인용 법령 검증
+                                                </div>
+                                                {verifying ? (
+                                                    <div className="flex items-center gap-2 text-slate-400 text-sm">
+                                                        <Loader2 size={16} className="animate-spin" /> law.go.kr 원문과 대조 중...
+                                                    </div>
+                                                ) : (
+                                                    <div className="space-y-2">
+                                                        {citations.map((c, i) => {
+                                                            const ok = c.status === "verified";
+                                                            const label = ok ? "확인됨" : c.status === "article_not_found" ? "조문 확인 안 됨" : c.status === "law_not_found" ? "법령 확인 안 됨" : "확인 실패";
+                                                            return (
+                                                                <div key={i} className={`flex items-center justify-between p-3 rounded-xl border text-sm ${ok ? "bg-emerald-50 border-emerald-100" : c.status === "error" ? "bg-slate-50 border-slate-100" : "bg-amber-50 border-amber-100"}`}>
+                                                                    <div className="flex items-center gap-2 font-bold text-slate-700">
+                                                                        {ok ? <ShieldCheck size={16} className="text-emerald-600 shrink-0" /> : <AlertCircle size={16} className={`shrink-0 ${c.status === "error" ? "text-slate-400" : "text-amber-500"}`} />}
+                                                                        {c.url ? (
+                                                                            <a href={c.url} target="_blank" rel="noopener noreferrer" className="hover:underline">{c.law} {c.article}</a>
+                                                                        ) : (
+                                                                            <span>{c.law} {c.article}</span>
+                                                                        )}
+                                                                    </div>
+                                                                    <span className={`text-[10px] font-black uppercase tracking-widest shrink-0 ${ok ? "text-emerald-600" : c.status === "error" ? "text-slate-400" : "text-amber-600"}`}>{label}</span>
+                                                                </div>
+                                                            );
+                                                        })}
+                                                        {citations.some((c) => c.status !== "verified") && (
+                                                            <p className="text-[11px] text-amber-600 font-bold flex items-center gap-1.5 pt-1">
+                                                                <AlertCircle size={12} /> 확인되지 않은 인용은 원문(law.go.kr)에서 직접 검토하세요.
+                                                            </p>
+                                                        )}
+                                                    </div>
+                                                )}
+                                            </section>
                                         )}
 
                                         {/* Sources & Subscription Section */}
