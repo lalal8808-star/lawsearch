@@ -65,6 +65,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# 텍스트 응답(히스토리/컨텍스트 등) 압축 — 원거리 전송량을 크게 줄인다
+from fastapi.middleware.gzip import GZipMiddleware
+app.add_middleware(GZipMiddleware, minimum_size=1024)
+
 @app.get("/")
 async def root():
     return {"message": "JongLaw AI API is running"}
@@ -554,7 +558,20 @@ async def save_report_history(
 @app.get("/history")
 async def get_history(current_user: User = Depends(auth.get_current_user), db: Session = Depends(get_db)):
     reports = db.query(Report).filter(Report.user_id == current_user.id).order_by(Report.created_at.desc()).all()
-    return reports
+    # 목록 응답 슬림화: chat_history(후속 대화 전문)는 목록에서 제외하고 상세(GET /history/{id})에서만 내려준다.
+    # (리포트 수십 개면 수백 KB → 원거리 전송이 히스토리 로딩을 느리게 만드는 주범)
+    return [
+        {
+            "id": r.id,
+            "query": r.query,
+            "answer": r.answer,
+            "engine": r.engine,
+            "sources": r.sources,
+            "tags": r.tags or [],
+            "created_at": r.created_at,
+        }
+        for r in reports
+    ]
 
 @app.get("/history/{report_id}")
 async def get_report_detail(report_id: int, current_user: User = Depends(auth.get_current_user), db: Session = Depends(get_db)):
