@@ -1,0 +1,8 @@
+{
+  "crons": [
+    {
+      "path": "/legal-watch/check-cron",
+      "schedule": "0 0 * * *"
+    }
+  ]
+}

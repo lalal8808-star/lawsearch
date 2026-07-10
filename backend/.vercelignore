@@ -1,0 +1,9 @@
+venv/
+__pycache__/
+chroma_db/
+*.db
+test_*.py
+list_routes.py
+create_api_key.py
+migrate_db.py
+Dockerfile

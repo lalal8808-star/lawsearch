@@ -3,15 +3,13 @@ uvicorn
 pydantic
 httpx
 xmltodict
-langchain
 langchain-google-genai
+langchain-text-splitters
+langchain-core
 python-dotenv
 PyPDF2
 pymupdf
 python-hwpx
-langchain-community
-langchain-text-splitters
-langchain-core
 python-multipart
 PyJWT
 bcrypt
@@ -20,5 +18,3 @@ SQLAlchemy
 supabase
 cryptography
 slowapi
-fpdf2
-langchain-openai

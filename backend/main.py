@@ -1,4 +1,4 @@
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Depends, Request, BackgroundTasks, Response
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Depends, Request, Response
 import os
 import re
 import logging
@@ -266,7 +266,6 @@ async def search_laws(query: str, page: int = 1):
 @limiter.limit("10/minute")
 async def upload_document(
     request: Request,
-    background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     current_user: User = Depends(auth.get_current_user)
 ):
@@ -292,10 +291,10 @@ async def upload_document(
             detail="문서에서 텍스트를 추출하지 못했습니다. 스캔본(이미지) PDF이거나 텍스트 레이어가 없는 파일일 수 있습니다. 텍스트 기반 PDF로 다시 시도해 주세요."
         )
 
-    # 임베딩은 청크 수에 비례해 수 분까지 걸릴 수 있어 HTTP 요청 안에서 처리하면
-    # 연결 타임아웃("Network Error")이 난다. 백그라운드로 넘기고 즉시 응답한다.
-    background_tasks.add_task(rag_engine.add_documents, docs, current_user.id)
-    return {"message": f"File {file.filename} accepted and is being processed", "status": "processing"}
+    # 서버리스(Vercel Fluid)에서는 응답 후 백그라운드 실행이 보장되지 않으므로 요청 안에서 처리한다.
+    # 함수 타임아웃 300s, 50청크 배치 임베딩이라 대형 문서(200+청크)도 1~2분 내 완료된다.
+    await rag_engine.add_documents(docs, user_id=current_user.id)
+    return {"message": f"File {file.filename} uploaded and processed", "status": "done"}
 
 @app.get("/uploads")
 async def get_uploads(current_user: User = Depends(auth.get_current_user)):
@@ -662,6 +661,16 @@ async def trigger_legal_watch_check(
     # This might be restricted to admin in production
     results = await legal_watch_engine.check_updates(db)
     return {"status": "success", "updates_found": len(results), "details": results}
+
+@app.get("/legal-watch/check-cron")
+async def legal_watch_cron(request: Request, db: Session = Depends(get_db)):
+    """Vercel Cron이 매일 호출하는 법령 개정 감시 잡.
+    CRON_SECRET 환경변수가 설정돼 있으면 Vercel이 Authorization: Bearer <secret>을 보낸다."""
+    secret = os.getenv("CRON_SECRET")
+    if not secret or request.headers.get("Authorization") != f"Bearer {secret}":
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    results = await legal_watch_engine.check_updates(db)
+    return {"status": "success", "updates_found": len(results)}
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000)
