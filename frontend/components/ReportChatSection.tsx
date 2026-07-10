@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import { Send, MessageSquare, Loader2, Scale, Zap } from 'lucide-react';
+import { getAuthToken } from '@/utils/api';
 
 interface Message {
     role: 'user' | 'assistant';
@@ -38,8 +39,7 @@ export default function ReportChatSection({ initialHistory = [], query, answer }
         setIsLoading(true);
 
         try {
-            let token = localStorage.getItem('jonglaw_token');
-            if (token === 'null' || token === 'undefined') token = null;
+            const token = await getAuthToken(); // 항상 갱신된 세션 토큰 사용
 
             // 메인 채팅발 임시 리포트는 백엔드에 저장돼 있지 않으므로, 리포트 내용을
             // 대화 맥락으로 전달하고 Vercel AI Gateway(/api/chat)로 후속 질문을 처리한다.

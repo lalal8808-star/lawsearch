@@ -13,12 +13,14 @@ export default function HistorySidebar() {
     const [mounted, setMounted] = useState(false);
     const [search, setSearch] = useState("");
     const [activeTag, setActiveTag] = useState<string | null>(null);
-    const { user, token } = useAuth();
+    const { user, token, loading: authLoading } = useAuth();
 
     useEffect(() => {
         setMounted(true);
     }, []);
 
+
+    const CACHE_KEY = "jonglaw_history_cache";
 
     const fetchHistory = async () => {
         if (!token) return;
@@ -26,6 +28,8 @@ export default function HistorySidebar() {
         try {
             const res = await api.get(`/history`);
             setReports(res.data);
+            // 다음 접속 때 백엔드(콜드스타트) 응답을 기다리지 않고 즉시 보여주기 위한 캐시
+            try { sessionStorage.setItem(CACHE_KEY, JSON.stringify(res.data)); } catch { }
         } catch (error) {
             console.error("Failed to fetch history", error);
         } finally {
@@ -35,16 +39,24 @@ export default function HistorySidebar() {
 
     useEffect(() => {
         if (user && mounted) {
+            // 캐시가 있으면 즉시 표시(백엔드 콜드스타트 수십 초를 기다리지 않음), 백그라운드에서 갱신
+            try {
+                const cached = sessionStorage.getItem(CACHE_KEY);
+                if (cached) setReports(JSON.parse(cached));
+            } catch { }
             fetchHistory();
-        } else {
+        } else if (mounted && !user && !authLoading) {
+            // 인증 확인이 끝났는데도 미로그인일 때만 비운다
+            // (초기 로딩 중 user=null 순간에 캐시를 지우면 즉시 표시 효과가 사라짐)
             setReports([]);
+            try { sessionStorage.removeItem(CACHE_KEY); } catch { }
         }
 
         // Listen for new reports
         const handleRefresh = () => fetchHistory();
         window.addEventListener('report-generated', handleRefresh);
         return () => window.removeEventListener('report-generated', handleRefresh);
-    }, [user, token, mounted]);
+    }, [user, token, mounted, authLoading]);
 
     const deleteReport = async (id: number, e: React.MouseEvent) => {
         e.stopPropagation();

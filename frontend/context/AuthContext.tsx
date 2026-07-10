@@ -61,7 +61,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         };
 
         initAuth();
-        return () => subscription.unsubscribe();
+
+        // api 인터셉터가 세션 refresh 재시도까지 실패했을 때 발생시키는 이벤트.
+        // 페이지 리로드 없이 로그아웃 상태만 반영한다 (작성 중 입력 보존).
+        const onAuthExpired = () => clearAuth();
+        window.addEventListener("auth-expired", onAuthExpired);
+
+        return () => {
+            subscription.unsubscribe();
+            window.removeEventListener("auth-expired", onAuthExpired);
+        };
     }, []);
 
     const handleSupabaseSession = async (session: Session) => {

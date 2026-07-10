@@ -3,7 +3,7 @@
 import { useState, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Send, Bot, User, Scale, BookOpen, FileText, Clock, X, ShieldCheck, AlertTriangle, FileSearch, CheckCircle2, AlertCircle } from "lucide-react";
-import api from "@/utils/api";
+import api, { getAuthToken } from "@/utils/api";
 import axios from "axios";
 import { useAuth } from "@/context/AuthContext";
 import ImageUpload from "./ImageUpload";
@@ -98,17 +98,14 @@ export default function AIPanel() {
     };
 
     const handle401Error = () => {
+        // 리로드 금지: 작성 중인 입력이 날아간다. 스토리지 정리는 api 인터셉터가 담당하고,
+        // 여기서는 10초 스로틀로 안내만 한다. (세션 refresh 재시도도 인터셉터가 이미 수행)
         if (typeof window !== "undefined") {
-            localStorage.removeItem("jonglaw_token");
-            localStorage.removeItem("jonglaw_user");
-            localStorage.removeItem("jonglaw_nickname");
-            
-            const lastReload = sessionStorage.getItem("last_401_reload");
+            const lastAlert = sessionStorage.getItem("last_401_alert");
             const now = Date.now();
-            if (!lastReload || now - parseInt(lastReload) > 10000) {
-                sessionStorage.setItem("last_401_reload", now.toString());
+            if (!lastAlert || now - parseInt(lastAlert) > 10000) {
+                sessionStorage.setItem("last_401_alert", now.toString());
                 alert("인증 정보가 만료되었거나 유효하지 않습니다. 다시 로그인해 주세요.");
-                window.location.reload();
             }
         }
     };
@@ -130,8 +127,7 @@ export default function AIPanel() {
                 formData.append("file", selectedImage);
                 if (query.trim()) formData.append("description", query.trim());
 
-                let token = localStorage.getItem("jonglaw_token");
-                if (token === "null" || token === "undefined") token = null;
+                const token = await getAuthToken(); // 항상 갱신된 세션 토큰 사용
                 const res = await axios.post(`/api/analyze`, formData, {
                     headers: token ? { Authorization: `Bearer ${token}` } : {},
                     signal: controller.signal
@@ -147,8 +143,7 @@ export default function AIPanel() {
                 setMessages((prev) => [...prev, assistantMsg]);
                 setSelectedImage(null); // Clear after send
             } else {
-                let token = localStorage.getItem("jonglaw_token");
-                if (token === "null" || token === "undefined") token = null;
+                const token = await getAuthToken(); // 항상 갱신된 세션 토큰 사용
                 const response = await fetch('/api/chat', {
                     method: 'POST',
                     headers: {
