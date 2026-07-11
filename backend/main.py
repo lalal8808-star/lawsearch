@@ -1,11 +1,13 @@
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Depends, Request, Response
 import os
 import re
+import time
 import logging
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
 from typing import List, Optional
 from sqlalchemy.orm import Session
+from sqlalchemy import text as sa_text
 from datetime import datetime
 
 from langchain_core.documents import Document
@@ -45,6 +47,31 @@ app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 MAX_FILE_SIZE = 10 * 1024 * 1024 # 10MB limit for file uploads
+
+
+def enforce_rate_limit(db: Session, user_key, bucket: str, limit: int, window_seconds: int = 3600):
+    """공유 DB 기반 고정창(fixed-window) per-user 레이트리밋.
+    서버리스에서 인스턴스 간 공유되며, 검사 자체가 실패하면 fail-open(요청 허용)한다."""
+    try:
+        window = int(time.time()) // window_seconds
+        cnt = db.execute(sa_text("""
+            INSERT INTO rate_limits (user_key, bucket, window_key, count)
+            VALUES (:u, :b, :w, 1)
+            ON CONFLICT (user_key, bucket, window_key)
+            DO UPDATE SET count = rate_limits.count + 1
+            RETURNING count
+        """), {"u": str(user_key), "b": bucket, "w": window}).scalar()
+        db.commit()
+        if cnt and cnt > limit:
+            raise HTTPException(status_code=429, detail="요청이 너무 많습니다. 잠시 후 다시 시도해 주세요.")
+    except HTTPException:
+        raise
+    except Exception as e:
+        try:
+            db.rollback()
+        except Exception:
+            pass
+        logger.warning(f"rate limit skipped ({bucket}): {e}")
 
 # Configure CORS
 env_origins = os.getenv("ALLOWED_ORIGINS", "http://localhost:3000,http://127.0.0.1:3000,http://localhost:3001").split(",")
@@ -247,23 +274,27 @@ async def delete_api_key(
 
 # --- Law Endpoints ---
 
+# law.go.kr 프록시 + LLM(recommend)을 타는 엔드포인트들. 익명 남용(외부 API 쿼터/LLM 비용)
+# 방지를 위해 모두 인증을 요구한다.
 @app.get("/laws/article")
-async def get_law_article(law_name: str, article_no: str):
+async def get_law_article(law_name: str, article_no: str, current_user: User = Depends(auth.get_current_user)):
     text = rag_engine.get_article_text(law_name, article_no)
     if not text:
         raise HTTPException(status_code=404, detail="Article not found")
     return {"text": text}
 
 @app.get("/laws/synced")
-async def get_synced_laws():
+async def get_synced_laws(current_user: User = Depends(auth.get_current_user)):
     return rag_engine.get_synced_msts()
 
 @app.post("/laws/recommend")
-async def recommend_laws(case: str = Form(...)):
+async def recommend_laws(case: str = Form(...), current_user: User = Depends(auth.get_current_user), db: Session = Depends(get_db)):
+    enforce_rate_limit(db, current_user.id, "laws-recommend", 30)
     return await rag_engine.recommend_laws(case)
 
 @app.get("/laws/search")
-async def search_laws(query: str, page: int = 1):
+async def search_laws(query: str, page: int = 1, current_user: User = Depends(auth.get_current_user), db: Session = Depends(get_db)):
+    enforce_rate_limit(db, current_user.id, "laws-search", 60)
     return await law_client.search_laws(query, page=page)
 
 @app.post("/upload")
@@ -271,8 +302,10 @@ async def search_laws(query: str, page: int = 1):
 async def upload_document(
     request: Request,
     file: UploadFile = File(...),
-    current_user: User = Depends(auth.get_current_user)
+    current_user: User = Depends(auth.get_current_user),
+    db: Session = Depends(get_db)
 ):
+    enforce_rate_limit(db, current_user.id, "upload", 20)  # 시간당 20건
     filename = file.filename.lower()
     is_pdf = filename.endswith(".pdf")
     is_hwpx = filename.endswith(".hwpx")
@@ -313,8 +346,12 @@ async def delete_upload(source: str, current_user: User = Depends(auth.get_curre
 @app.get("/query-context")
 async def query_context(
     query: str,
-    current_user: Optional[User] = Depends(auth.get_current_user_optional)
+    current_user: User = Depends(auth.get_current_user),
+    db: Session = Depends(get_db)
 ):
+    # 인증 필수: Gemini(의도·법령탐지·임베딩) + law.go.kr 조회 + Supabase 쓰기까지 수행하는
+    # 비싼 엔드포인트다. 익명 접근을 막고 per-user 유량을 제한해 비용/DoS 남용을 차단한다.
+    enforce_rate_limit(db, current_user.id, "query-context", 60)  # 시간당 60회
     try:
         required_laws = await rag_engine.detect_required_laws(query)
         if required_laws:
@@ -440,8 +477,9 @@ def _clean_line(line: str) -> str:
     return line
 
 @app.post("/export/hwpx")
-async def export_hwpx(payload: ExportRequest, current_user: User = Depends(auth.get_current_user)):
+async def export_hwpx(payload: ExportRequest, current_user: User = Depends(auth.get_current_user), db: Session = Depends(get_db)):
     """보고서를 한글(HWPX) 파일로 생성해 다운로드로 반환한다."""
+    enforce_rate_limit(db, current_user.id, "export-hwpx", 120)
     from hwpx import HwpxDocument
     from urllib.parse import quote
 
@@ -477,8 +515,9 @@ class VerifyCitationsRequest(BaseModel):
     text: str
 
 @app.post("/verify-citations")
-async def verify_citations(payload: VerifyCitationsRequest, current_user: User = Depends(auth.get_current_user)):
+async def verify_citations(payload: VerifyCitationsRequest, current_user: User = Depends(auth.get_current_user), db: Session = Depends(get_db)):
     """보고서 본문의 '<법령명> 제N조' 인용을 law.go.kr 실제 조문과 대조해 환각을 검증한다."""
+    enforce_rate_limit(db, current_user.id, "verify-citations", 60)
     text = payload.text or ""
     seen = set()
     by_law = {}

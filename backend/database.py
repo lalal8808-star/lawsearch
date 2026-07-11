@@ -1,4 +1,4 @@
-from sqlalchemy import create_engine, Column, Integer, String, Text, DateTime, ForeignKey, JSON
+from sqlalchemy import create_engine, Column, Integer, String, Text, DateTime, ForeignKey, JSON, UniqueConstraint
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, relationship
 from datetime import datetime
@@ -135,6 +135,18 @@ class APIKey(Base):
     is_active = Column(Integer, default=1) # 1=Active, 0=Revoked
 
     owner = relationship("User", back_populates="api_keys")
+
+class RateLimit(Base):
+    # 서버리스에서도 인스턴스 간 공유되는 고정창(fixed-window) 레이트리밋 카운터.
+    # (slowapi 인메모리는 인스턴스마다 리셋돼 무력하므로 공유 DB를 사용)
+    __tablename__ = "rate_limits"
+    id = Column(Integer, primary_key=True, index=True)
+    user_key = Column(String, index=True)   # user id 또는 익명 식별자
+    bucket = Column(String)                  # 엔드포인트 그룹
+    window_key = Column(Integer)             # floor(epoch / window_seconds)
+    count = Column(Integer, default=0)
+    __table_args__ = (UniqueConstraint("user_key", "bucket", "window_key", name="uq_ratelimit"),)
+
 
 def run_migrations():
     """기존 테이블에 새 컬럼을 idempotent하게 추가한다(create_all은 컬럼 추가를 안 함).
