@@ -93,22 +93,17 @@ export default function HistorySidebar() {
         patchTags(report, (report.tags || []).filter((x: string) => x !== tag));
     };
 
-    const openReport = async (report: any) => {
-        // 목록 응답에는 chat_history가 빠져 있으므로(payload 절감) 열 때 상세를 가져온다.
-        let chatHistory: any[] = report.chat_history || [];
-        if (!report.chat_history) {
-            try {
-                const res = await api.get(`/history/${report.id}`);
-                chatHistory = res.data?.chat_history || [];
-            } catch { /* 상세 조회 실패 시 후속대화 없이 연다 */ }
-        }
+    const openReport = (report: any) => {
+        // 반드시 동기적으로 window.open을 호출해야 한다. await를 먼저 두면 클릭 제스처를
+        // 벗어나 팝업 차단기에 막힌다("클릭해도 무반응"). chat_history(후속대화)는 목록
+        // payload에서 빠져 있으므로 /report 페이지가 상세로 보강한다.
         sessionStorage.setItem("jonglaw_last_report", JSON.stringify({
             reportId: report.id.toString(),
             query: report.query,
             answer: report.answer,
             sources: report.sources,
             engine: report.engine,
-            chat_history: chatHistory
+            chat_history: report.chat_history || []
         }));
         window.open("/report", "_blank");
     };

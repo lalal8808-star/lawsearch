@@ -5,6 +5,7 @@ import LegalReportView from "@/components/LegalReportView";
 import { Loader2, AlertCircle } from "lucide-react";
 import LegalWatchModal from "@/components/LegalWatchModal";
 import { AuthProvider } from "@/context/AuthContext";
+import api from "@/utils/api";
 
 export default function ReportPage() {
     const [reportData, setReportData] = useState<any>(null);
@@ -17,7 +18,21 @@ export default function ReportPage() {
         const data = sessionStorage.getItem("jonglaw_last_report");
         if (data) {
             try {
-                setReportData(JSON.parse(data));
+                const parsed = JSON.parse(data);
+                setReportData(parsed);
+                // 히스토리 목록에서 열면 chat_history가 비어 있으므로(payload 절감) 상세로 보강.
+                // 저장된 보고서(숫자 id)만 대상. 이 fetch는 리포트 탭에서 실행되어 팝업과 무관.
+                const rid = parseInt(parsed.reportId);
+                if (!isNaN(rid) && (!parsed.chat_history || parsed.chat_history.length === 0)) {
+                    api.get(`/history/${rid}`)
+                        .then((res) => {
+                            const ch = res.data?.chat_history;
+                            if (Array.isArray(ch) && ch.length) {
+                                setReportData((prev: any) => ({ ...prev, chat_history: ch }));
+                            }
+                        })
+                        .catch(() => { /* 후속대화 없이 그대로 표시 */ });
+                }
             } catch (e) {
                 setError("데이터를 불러오는 중 오류가 발생했습니다.");
             }
