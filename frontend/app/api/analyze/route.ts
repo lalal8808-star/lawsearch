@@ -1,4 +1,7 @@
 import { generateText } from 'ai';
+
+// PDF/이미지 파싱 + gpt-5.5 분석까지 한 요청에서 처리하므로 기본 타임아웃보다 여유가 필요하다.
+export const maxDuration = 300;
 import { createClient } from '@supabase/supabase-js';
 // @ts-ignore
 import pdf from 'pdf-parse/lib/pdf-parse.js';

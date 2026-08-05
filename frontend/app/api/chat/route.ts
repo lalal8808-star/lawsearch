@@ -1,6 +1,11 @@
 import { streamText } from 'ai';
 import { createClient } from '@supabase/supabase-js';
 
+// 이 라우트는 한 요청에서 인증 → 백엔드 query-context(법령 자동수집·임베딩·벡터검색, 20초+)
+// → gpt-5.5 보고서 생성까지 수행한다. 기본 타임아웃으로는 스트림 시작 전에 끊겨
+// 진행률이 98%에서 멈춘 것처럼 보이므로 상한을 늘린다.
+export const maxDuration = 300;
+
 export async function POST(req: Request) {
   try {
     const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;

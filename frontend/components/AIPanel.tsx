@@ -162,8 +162,17 @@ export default function AIPanel() {
                         handle401Error();
                         return;
                     }
-                    const errData = await response.json();
-                    throw new Error(errData.error || '채팅 응답에 실패했습니다.');
+                    // 504(타임아웃) 등은 본문이 JSON이 아닌 HTML이라 json() 파싱이 또 터진다.
+                    // 상태코드 기반으로 원인을 알 수 있게 처리한다.
+                    let detail = '';
+                    try {
+                        detail = (await response.json())?.error || '';
+                    } catch {
+                        detail = response.status === 504 || response.status === 502
+                            ? '응답 시간이 초과되었습니다. 질문을 더 짧게 나눠서 다시 시도해 주세요.'
+                            : `서버 오류(${response.status})가 발생했습니다.`;
+                    }
+                    throw new Error(detail || '채팅 응답에 실패했습니다.');
                 }
 
                 const reader = response.body?.getReader();
