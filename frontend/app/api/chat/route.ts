@@ -2,11 +2,31 @@ import { streamText } from 'ai';
 import { createClient } from '@supabase/supabase-js';
 
 // 이 라우트는 한 요청에서 인증 → 백엔드 query-context(법령 자동수집·임베딩·벡터검색, 20초+)
-// → gpt-5.5 보고서 생성까지 수행한다. 기본 타임아웃으로는 스트림 시작 전에 끊겨
+// → GPT-5.6 Sol 보고서 생성까지 수행한다. 기본 타임아웃으로는 스트림 시작 전에 끊겨
 // 진행률이 98%에서 멈춘 것처럼 보이므로 상한을 늘린다.
 export const maxDuration = 300;
 
+const backendUrl = () => (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000').replace(/\/$/, '');
+
+async function updateJob(token: string, jobId: string | undefined, payload: Record<string, unknown>) {
+  if (!jobId) return;
+  try {
+    const response = await fetch(`${backendUrl()}/jobs/${encodeURIComponent(jobId)}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify(payload),
+      cache: 'no-store',
+    });
+    if (!response.ok) console.error(JSON.stringify({ event: 'job_update_failed', jobId, status: response.status }));
+  } catch (error) {
+    console.error(JSON.stringify({ event: 'job_update_error', jobId, error: error instanceof Error ? error.message : String(error) }));
+  }
+}
+
 export async function POST(req: Request) {
+  const requestId = req.headers.get('x-request-id') || crypto.randomUUID();
+  let activeJobId: string | undefined;
+  let activeToken = '';
   try {
     const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
     const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
@@ -22,6 +42,7 @@ export async function POST(req: Request) {
     // 1. Supabase OIDC (JWT) Token Verification
     const authHeader = req.headers.get('Authorization');
     const token = authHeader?.split(' ')[1];
+    activeToken = token || '';
     
     if (!token || token === 'null' || token === 'undefined' || token.split('.').length !== 3) {
       return new Response(
@@ -40,8 +61,19 @@ export async function POST(req: Request) {
     }
 
     // 2. 파라미터 파싱
-    const { messages } = await req.json();
+    const body = await req.json();
+    const followUp = body.mode === 'followup';
+    const messages = Array.isArray(body.messages) ? body.messages.slice(-30).map((message: any) => ({
+      role: message?.role === 'assistant' ? 'assistant' : 'user',
+      content: String(message?.content || '').slice(0, 30000),
+    })) : [];
+    activeJobId = typeof body.jobId === 'string' ? body.jobId : undefined;
     const lastUserMessage = messages[messages.length - 1]?.content || '';
+    if (!lastUserMessage.trim()) {
+      return new Response(JSON.stringify({ error: '질문 내용이 없습니다.' }), { status: 400, headers: { 'Content-Type': 'application/json' } });
+    }
+    console.info(JSON.stringify({ event: 'chat_started', requestId, jobId: activeJobId, userId: user.id, messageCount: messages.length }));
+    await updateJob(token, activeJobId, { status: 'running', stage: '관련 법령·소스 검색', progress: 20 });
 
     // 3. 백엔드 FastAPI를 호출하여 RAG 컨텍스트 및 소스 추출
     let ragContext = '';
@@ -49,13 +81,11 @@ export async function POST(req: Request) {
     let ragIntent = 'CHAT';
 
     try {
-      const backendUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
-      const cleanBackendUrl = backendUrl.endsWith('/') ? backendUrl.slice(0, -1) : backendUrl;
-      
-      const ragRes = await fetch(`${cleanBackendUrl}/query-context?query=${encodeURIComponent(lastUserMessage)}`, {
+      const ragRes = await fetch(`${backendUrl()}/query-context?query=${encodeURIComponent(lastUserMessage)}`, {
         headers: {
           'Authorization': `Bearer ${token}`
-        }
+        },
+        cache: 'no-store',
       });
       
       if (ragRes.ok) {
@@ -69,6 +99,11 @@ export async function POST(req: Request) {
     } catch (ragErr) {
       console.error('Error fetching RAG context:', ragErr);
     }
+    const effectiveIntent = followUp ? 'CHAT' : ragIntent;
+    await updateJob(token, activeJobId, {
+      status: 'running', stage: 'AI 보고서 생성', progress: 55,
+      intent: effectiveIntent, sources: ragSources,
+    });
 
     // 4. 시스템 프롬프트 구성
     const persona = `당신의 이름은 'JongLaw AI'입니다.
@@ -78,7 +113,9 @@ export async function POST(req: Request) {
     const sourceRule = `\n\n[참고 자료 사용 원칙]\n- 위 참고 자료 중 질문과 직접 관련 없는 내용은 사용하지 말고 무시하십시오 (관련성은 스스로 판단).\n- 답변·분석에 실제로 근거로 삼은 법령·판례의 정확한 명칭(조문 포함)을 본문에 명시하십시오.\n- 참고 자료에 근거가 없으면 일반 법리로 답하되, 추측을 단정적으로 쓰지 마십시오.`;
 
     let systemInstruction = '';
-    if (ragIntent === 'CHAT') {
+    if (followUp) {
+      systemInstruction = `${persona}\n\n이 대화는 이미 생성된 법률 보고서의 추가 질의입니다. 기존 보고서 맥락과 아래 검색 근거를 활용해 질문에 직접 답하고, 새 보고서 형식으로 재작성하지 마십시오. 불필요한 반복을 피하고 필요한 법령·조문만 명시하십시오.\n\n추가 검색 근거:\n${ragContext}${sourceRule}`;
+    } else if (effectiveIntent === 'CHAT') {
       systemInstruction = `${persona}\n\n참고 법령 및 판례:\n${ragContext}${sourceRule}\n\n위 참고 자료를 바탕으로 질문에 대해 친절하고 전문적으로 답변하십시오.`;
     } else {
       systemInstruction = `${persona}\n\n참고 법령 및 자료(판례 포함):\n${ragContext}${sourceRule}\n\n전문 변호사로서 [사건 개요, 법률 분석, 판례 분석, 결론, 향후 조치] 순서로 체계적인 자문 리포트를 작성하십시오. 특히 제공된 '판례'를 분석하여 유사 사례에서의 판단 기준을 명확히 제시하십시오. '법률 분석'에는 근거 법령의 명칭과 조문을 구체적으로 적시하십시오.`;
@@ -88,18 +125,32 @@ export async function POST(req: Request) {
     // 비용 통제: 사용자 단위 태깅으로 대시보드에서 사용량 추적·per-user 레이트리밋을 걸 수 있고,
     // maxOutputTokens로 요청당 최대 출력을 제한해 폭주 비용을 막는다.
     const result = streamText({
-      model: 'openai/gpt-5.5',
+      model: 'openai/gpt-5.6-sol',
       system: systemInstruction,
       messages,
-      maxOutputTokens: ragIntent === 'REPORT' ? 8000 : 2000,
+      maxOutputTokens: effectiveIntent === 'REPORT' ? 8000 : followUp ? 2500 : 2000,
       providerOptions: {
         gateway: {
           user: user.id,
-          tags: ['feature:chat', `intent:${(ragIntent || 'chat').toLowerCase()}`],
+          tags: [followUp ? 'feature:follow-up' : 'feature:chat', `intent:${effectiveIntent.toLowerCase()}`],
         },
       },
       onError({ error }) {
-        console.error('AI SDK Stream Error Details:', error);
+        console.error(JSON.stringify({ event: 'gateway_stream_error', requestId, jobId: activeJobId, error: error instanceof Error ? error.message : String(error) }));
+        void updateJob(token, activeJobId, { status: 'error', stage: 'AI 응답 오류', error: error instanceof Error ? error.message : String(error) });
+      },
+      async onFinish({ text, usage, finishReason }) {
+        const isReport = effectiveIntent === 'REPORT';
+        await updateJob(token, activeJobId, {
+          status: isReport ? 'generated' : 'complete',
+          stage: isReport ? '보고서 생성 완료·저장 대기' : '답변 완료',
+          progress: isReport ? 90 : 100,
+          result: text,
+          sources: ragSources,
+          intent: effectiveIntent,
+          token_usage: usage ? JSON.parse(JSON.stringify(usage)) : {},
+        });
+        console.info(JSON.stringify({ event: 'chat_finished', requestId, jobId: activeJobId, intent: effectiveIntent, followUp, finishReason, usage }));
       }
     });
 
@@ -107,12 +158,17 @@ export async function POST(req: Request) {
       headers: {
         // HTTP 헤더는 Latin-1만 허용 → 한글 소스명이 들어가므로 URL 인코딩 (프론트에서 decode)
         'X-RAG-Sources': encodeURIComponent(JSON.stringify(ragSources)),
-        'X-RAG-Intent': ragIntent,
+        'X-RAG-Intent': effectiveIntent,
+        'X-Generation-Job': activeJobId || '',
+        'X-Request-Id': requestId,
       }
     });
 
   } catch (err: any) {
-    console.error('Chat API Route Error:', err);
+    console.error(JSON.stringify({ event: 'chat_route_error', requestId, jobId: activeJobId, error: err?.message || String(err) }));
+    if (activeToken && activeJobId) {
+      await updateJob(activeToken, activeJobId, { status: 'error', stage: '요청 처리 실패', error: err?.message || String(err) });
+    }
     return new Response(
       JSON.stringify({ error: `서버 내부 오류가 발생했습니다: ${err.message}` }), 
       { status: 500, headers: { 'Content-Type': 'application/json' } }

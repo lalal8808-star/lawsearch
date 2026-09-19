@@ -85,8 +85,7 @@ export async function POST(req: Request) {
 
     // 5. Generate Answer via AI SDK
     const { text } = await generateText({
-      // We will use gpt-4o as previously rolled back.
-      model: 'openai/gpt-4o',
+      model: 'openai/gpt-5.6-sol',
       system: systemInstruction,
       messages: [{ role: 'user', content: query }],
       maxOutputTokens: ragIntent === 'REPORT' ? 8000 : 2000,

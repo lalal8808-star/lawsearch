@@ -95,43 +95,43 @@ export default function LegalWatchModal({ isOpen, onClose, initialTab = "notific
                     animate={{ opacity: 1 }}
                     exit={{ opacity: 0 }}
                     onClick={onClose}
-                    className="absolute inset-0 bg-black/60 backdrop-blur-sm"
+                    className="absolute inset-0 bg-secondary/35 backdrop-blur-sm"
                 />
 
                 <motion.div
                     initial={{ opacity: 0, scale: 0.95, y: 20 }}
                     animate={{ opacity: 1, scale: 1, y: 0 }}
                     exit={{ opacity: 0, scale: 0.95, y: 20 }}
-                    className="relative w-full max-w-2xl bg-[#0f0f0f] border border-white/10 rounded-[2rem] shadow-2xl overflow-hidden flex flex-col max-h-[80vh]"
+                    className="relative w-full max-w-2xl bg-card text-secondary border border-border rounded-[18px] shadow-[0_30px_90px_rgba(23,34,57,0.2)] overflow-hidden flex flex-col max-h-[82vh]"
                 >
                     {/* Header */}
-                    <div className="p-8 border-b border-white/10 flex items-center justify-between">
+                    <div className="p-6 sm:p-8 border-b border-secondary/10 flex items-center justify-between bg-secondary/[0.02]">
                         <div className="flex items-center gap-4">
-                            <div className="w-12 h-12 bg-blue-600/20 rounded-2xl flex items-center justify-center">
-                                <Bell className="text-blue-500" size={24} />
+                            <div className="w-11 h-11 bg-accent/10 border border-accent/15 rounded-lg flex items-center justify-center">
+                                <Bell className="text-accent" size={21} />
                             </div>
                             <div>
-                                <h2 className="text-2xl font-black text-white tracking-tight">Legal Watch</h2>
-                                <p className="text-xs text-muted font-bold uppercase tracking-widest">사후 법령 관리 센터</p>
+                                <h2 className="editorial-serif text-2xl font-semibold text-secondary tracking-tight">Legal Watch</h2>
+                                <p className="text-[10px] text-muted font-semibold tracking-wide mt-1">사후 법령 관리 센터</p>
                             </div>
                         </div>
-                        <button onClick={onClose} className="p-2 hover:bg-white/5 rounded-full transition-colors">
+                        <button onClick={onClose} aria-label="닫기" className="p-2 hover:bg-secondary/5 rounded-full transition-colors">
                             <X className="text-muted" size={24} />
                         </button>
                     </div>
 
                     {/* Tabs */}
-                    <div className="flex px-8 border-b border-white/10">
+                    <div className="flex px-6 sm:px-8 border-b border-secondary/10">
                         <button
                             onClick={() => setActiveTab("notifications")}
-                            className={`px-6 py-4 text-xs font-black tracking-widest uppercase transition-all border-b-2 ${activeTab === "notifications" ? "text-blue-500 border-blue-500" : "text-muted border-transparent hover:text-white"
+                            className={`px-5 py-4 text-xs font-bold tracking-wide transition-all border-b-2 ${activeTab === "notifications" ? "text-accent border-accent" : "text-muted border-transparent hover:text-secondary"
                                 }`}
                         >
                             Notifications ({notifications.filter(n => !n.is_read).length})
                         </button>
                         <button
                             onClick={() => setActiveTab("subscriptions")}
-                            className={`px-6 py-4 text-xs font-black tracking-widest uppercase transition-all border-b-2 ${activeTab === "subscriptions" ? "text-blue-500 border-blue-500" : "text-muted border-transparent hover:text-white"
+                            className={`px-5 py-4 text-xs font-bold tracking-wide transition-all border-b-2 ${activeTab === "subscriptions" ? "text-accent border-accent" : "text-muted border-transparent hover:text-secondary"
                                 }`}
                         >
                             My Subscriptions ({subscriptions.length})
@@ -142,7 +142,7 @@ export default function LegalWatchModal({ isOpen, onClose, initialTab = "notific
                     <div className="flex-1 overflow-y-auto p-8 custom-scrollbar min-h-[400px]">
                         {loading ? (
                             <div className="h-full flex flex-col items-center justify-center gap-4 opacity-50">
-                                <Loader2 className="animate-spin text-blue-500" size={40} />
+                                <Loader2 className="animate-spin text-accent" size={40} />
                                 <span className="text-xs font-bold tracking-widest uppercase">Fetching updates...</span>
                             </div>
                         ) : activeTab === "notifications" ? (
@@ -151,7 +151,7 @@ export default function LegalWatchModal({ isOpen, onClose, initialTab = "notific
                                     <div className="flex justify-end mb-4">
                                         <button
                                             onClick={markAllAsRead}
-                                            className="text-[10px] font-black text-blue-500 hover:text-blue-400 uppercase tracking-widest transition-colors"
+                                            className="text-[10px] font-bold text-primary hover:text-secondary tracking-wide transition-colors"
                                         >
                                             Mark all as read
                                         </button>
@@ -166,26 +166,26 @@ export default function LegalWatchModal({ isOpen, onClose, initialTab = "notific
                                     notifications.map((notif) => (
                                         <div
                                             key={notif.id}
-                                            className={`p-6 rounded-2xl border transition-all ${notif.is_read
-                                                    ? "bg-white/5 border-white/5 opacity-60"
-                                                    : "bg-blue-600/5 border-blue-600/20 shadow-lg shadow-blue-500/5"
+                                            className={`p-5 rounded-[10px] border transition-all ${notif.is_read
+                                                    ? "bg-secondary/[0.025] border-secondary/[0.06] opacity-65"
+                                                    : "bg-accent/[0.045] border-accent/20 shadow-sm"
                                                 }`}
                                         >
                                             <div className="flex items-start justify-between gap-4">
                                                 <div className="space-y-2">
                                                     <div className="flex items-center gap-2">
-                                                        {!notif.is_read && <div className="w-2 h-2 bg-blue-500 rounded-full animate-pulse" />}
-                                                        <h4 className="text-sm font-black text-white">{notif.title}</h4>
+                                                        {!notif.is_read && <div className="w-2 h-2 bg-accent rounded-full" />}
+                                                        <h4 className="text-sm font-bold text-secondary">{notif.title}</h4>
                                                     </div>
                                                     <p className="text-xs text-muted leading-relaxed">{notif.message}</p>
                                                     <div className="flex items-center gap-3 pt-2">
-                                                        <span className="text-[10px] font-mono text-white/30">
+                                                        <span className="text-[10px] font-mono text-secondary/35">
                                                             {new Date(notif.created_at).toLocaleDateString()}
                                                         </span>
                                                         {!notif.is_read && (
                                                             <button
                                                                 onClick={() => markAsRead(notif.id)}
-                                                                className="text-[10px] font-black text-blue-500 hover:underline uppercase tracking-widest"
+                                                                className="text-[10px] font-bold text-primary hover:underline tracking-wide"
                                                             >
                                                                 [Mark Read]
                                                             </button>
@@ -195,7 +195,7 @@ export default function LegalWatchModal({ isOpen, onClose, initialTab = "notific
                                                 {notif.link && (
                                                     <a
                                                         href={notif.link}
-                                                        className="p-2 bg-white/5 hover:bg-white/10 rounded-xl text-white transition-all shadow-lg"
+                                                        className="p-2 bg-secondary/[0.05] hover:bg-secondary/10 rounded-lg text-secondary transition-all"
                                                         onClick={() => markAsRead(notif.id)}
                                                     >
                                                         <ExternalLink size={16} />
@@ -218,14 +218,14 @@ export default function LegalWatchModal({ isOpen, onClose, initialTab = "notific
                                     subscriptions.map((sub) => (
                                         <div
                                             key={sub.id}
-                                            className="p-6 bg-white/5 border border-white/10 rounded-2xl flex items-center justify-between group hover:border-blue-500/50 transition-all"
+                                            className="p-5 bg-secondary/[0.025] border border-secondary/[0.08] rounded-[10px] flex items-center justify-between group hover:border-accent/40 transition-all"
                                         >
                                             <div className="space-y-1">
-                                                <h4 className="text-sm font-black text-white">{sub.law_name}</h4>
+                                                <h4 className="text-sm font-bold text-secondary">{sub.law_name}</h4>
                                                 <div className="flex items-center gap-2 text-[10px] font-bold text-muted uppercase tracking-widest">
-                                                    <CheckCircle2 size={12} className="text-blue-500" />
+                                                    <CheckCircle2 size={12} className="text-accent" />
                                                     Monitoring active
-                                                    <span className="text-white/20 mx-1">|</span>
+                                                    <span className="text-secondary/20 mx-1">|</span>
                                                     Enforced: {sub.last_enforced_date}
                                                 </div>
                                             </div>
@@ -244,8 +244,8 @@ export default function LegalWatchModal({ isOpen, onClose, initialTab = "notific
                     </div>
 
                     {/* Footer Info */}
-                    <div className="p-6 bg-black/40 border-t border-white/5 flex items-center gap-3">
-                        <Info size={14} className="text-blue-500" />
+                    <div className="p-5 bg-secondary/[0.025] border-t border-secondary/[0.08] flex items-center gap-3">
+                        <Info size={14} className="text-accent" />
                         <p className="text-[9px] font-bold text-muted uppercase tracking-[0.2em]">
                             Updates are monitored via LAW.GO.KR API in real-time.
                         </p>

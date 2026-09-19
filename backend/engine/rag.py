@@ -55,7 +55,7 @@ class RAGEngine:
 
         # 백엔드 보조 LLM(detect_intent / detect_required_laws / filter_relevant_uploads)은
         # 임베딩과 동일하게 Gemini(GOOGLE_API_KEY)를 사용한다. 메인 채팅/보고서 생성은
-        # 프론트에서 Vercel AI Gateway(gpt-5.5)로 처리하므로 백엔드엔 OpenAI 키가 필요 없다.
+        # 프론트에서 Vercel AI Gateway(GPT-5.6 Sol)로 처리하므로 백엔드엔 OpenAI 키가 필요 없다.
         self.chat_llm = ChatGoogleGenerativeAI(
             model="gemini-2.5-flash",
             temperature=0.7,
@@ -134,13 +134,12 @@ class RAGEngine:
             self._refresh_metadata_cache()
         return list(self._metadata_cache['msts'])
 
-    async def add_documents(self, documents: List[Document], user_id: Optional[int] = None):
+    async def add_documents(self, documents: List[Document], user_id: Optional[int] = None) -> int:
         """
         Add documents to the vector store with chunking and direct Supabase insertion.
         """
         if not self.supabase_client:
-            print("Warning: Cannot add documents. Supabase client not initialized.")
-            return
+            raise RuntimeError("Supabase client is not configured")
 
         text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=100)
         chunks = text_splitter.split_documents(documents)
@@ -172,9 +171,11 @@ class RAGEngine:
                 # Invalidate cache
                 self._metadata_cache = None
                 print(f"Successfully added {len(chunks)} chunks.")
+                return len(chunks)
             except Exception as e:
-                # Runs in a background task; log instead of bubbling to a dead request
                 print(f"Error adding documents: {e}")
+                raise
+        return 0
 
     def delete_documents_by_mst(self, mst: str):
         """
@@ -253,7 +254,7 @@ class RAGEngine:
         try:
             response = await self.chat_llm.ainvoke(messages)
             content = self._normalize_content(response.content).strip().upper()
-            logger.info(f"detect_intent LLM output='{content}' for query='{user_query[:50]}'")
+            logger.info("detect_intent result=%s", content)
             return "REPORT" if "REPORT" in content else "CHAT"
         except Exception as e:
             print(f"Error in detect_intent: {e}")
@@ -285,7 +286,7 @@ class RAGEngine:
                 return set()
             nums = [int(n) for n in re.findall(r'\d+', content)]
             relevant = {sources[n - 1] for n in nums if 1 <= n <= len(sources)}
-            logger.info(f"[relevance] query='{user_query[:40]}' relevant_uploads={relevant}")
+            logger.info("upload relevance selected_count=%s candidate_count=%s", len(relevant), len(sources))
             return relevant
         except Exception as e:
             print(f"Error in filter_relevant_uploads: {e}")
@@ -357,24 +358,138 @@ class RAGEngine:
             print(f"Error getting user uploads: {e}")
             return []
 
-    def delete_user_upload(self, source_name: str, user_id: int):
+    def get_user_upload_details(self, user_id: int) -> List[Dict[str, Any]]:
+        """Return legacy/upload chunk metadata grouped by source or upload id."""
+        try:
+            if not self.supabase_client:
+                return []
+            response = self.supabase_client.table("documents") \
+                .select("content,metadata") \
+                .filter("metadata->>type", "eq", "user_upload") \
+                .filter("metadata->>user_id", "eq", str(user_id)) \
+                .execute()
+
+            grouped: Dict[str, Dict[str, Any]] = {}
+            for row in response.data or []:
+                meta = row.get("metadata") or {}
+                source = str(meta.get("source") or "").strip()
+                if not source:
+                    continue
+                group_key = str(meta.get("upload_id") or f"legacy:{source}")
+                item = grouped.setdefault(group_key, {
+                    "upload_id": meta.get("upload_id"),
+                    "source": source,
+                    "content_hash": meta.get("content_hash"),
+                    "file_size": meta.get("file_size"),
+                    "file_type": meta.get("file_type"),
+                    "version": int(meta.get("version") or 1),
+                    "uploaded_at": meta.get("uploaded_at"),
+                    "chunk_count": 0,
+                    "preview": "",
+                })
+                item["chunk_count"] += 1
+                if not item["preview"]:
+                    item["preview"] = str(row.get("content") or "")[:600]
+            return list(grouped.values())
+        except Exception as e:
+            logger.error("get_user_upload_details failed: %s", e)
+            return []
+
+    def get_upload_chunks(self, source_name: str, user_id: int, upload_id: Optional[str] = None, query: str = "", limit: int = 5) -> List[Dict[str, str]]:
+        if not self.supabase_client:
+            raise RuntimeError("Supabase client is not configured")
+        request = self.supabase_client.table("documents") \
+            .select("content,metadata") \
+            .filter("metadata->>type", "eq", "user_upload") \
+            .filter("metadata->>user_id", "eq", str(user_id))
+        if upload_id:
+            request = request.filter("metadata->>upload_id", "eq", upload_id)
+        else:
+            request = request.filter("metadata->>source", "eq", source_name)
+        response = request.limit(100).execute()
+        q = (query or "").strip().lower()
+        results = []
+        for row in response.data or []:
+            content = str(row.get("content") or "")
+            if q and q not in content.lower():
+                continue
+            results.append({"content": content[:1600]})
+            if len(results) >= max(1, min(limit, 10)):
+                break
+        return results
+
+    def purge_user_upload(self, source_name: str, user_id: int, upload_id: Optional[str] = None) -> int:
+        """Permanently delete a registered upload's vector chunks after ownership checks."""
+        if not self.supabase_client:
+            raise RuntimeError("Supabase client is not configured")
+        request = self.supabase_client.table("documents") \
+            .select("metadata") \
+            .filter("metadata->>type", "eq", "user_upload") \
+            .filter("metadata->>user_id", "eq", str(user_id))
+        if upload_id:
+            request = request.filter("metadata->>upload_id", "eq", upload_id)
+        else:
+            request = request.filter("metadata->>source", "eq", source_name)
+        before = request.execute()
+        matched_count = len(before.data or [])
+        if matched_count == 0:
+            return 0
+
+        deletion = self.supabase_client.table("documents") \
+            .delete() \
+            .filter("metadata->>type", "eq", "user_upload") \
+            .filter("metadata->>user_id", "eq", str(user_id))
+        if upload_id:
+            deletion = deletion.filter("metadata->>upload_id", "eq", upload_id)
+        else:
+            deletion = deletion.filter("metadata->>source", "eq", source_name)
+        deletion.execute()
+        self._metadata_cache = None
+        return matched_count
+
+    def delete_user_upload(self, source_name: str, user_id: int) -> int:
         """
         Delete all segments of a specific user-uploaded source.
         """
         try:
-            if not self.supabase_client: return
-            
+            if not self.supabase_client:
+                raise RuntimeError("Supabase client is not configured")
+
+            # 삭제 전 소유 청크 수를 확인한다. service_role을 쓰는 서버 코드이므로
+            # source만으로 지우지 않고 반드시 type + user_id까지 함께 제한한다.
+            before = self.supabase_client.table("documents") \
+                .select("metadata") \
+                .filter("metadata->>type", "eq", "user_upload") \
+                .filter("metadata->>source", "eq", source_name) \
+                .filter("metadata->>user_id", "eq", str(user_id)) \
+                .execute()
+            matched_count = len(before.data or [])
+            if matched_count == 0:
+                return 0
+
             self.supabase_client.table("documents") \
                 .delete() \
                 .filter("metadata->>type", "eq", "user_upload") \
                 .filter("metadata->>source", "eq", source_name) \
                 .filter("metadata->>user_id", "eq", str(user_id)) \
                 .execute()
-                
-            print(f"Deleted segments for uploaded source: {source_name} from Supabase")
+
+            # PostgREST 설정에 따라 DELETE 응답 본문이 비어 있을 수 있으므로 재조회로 검증한다.
+            remaining = self.supabase_client.table("documents") \
+                .select("metadata") \
+                .filter("metadata->>type", "eq", "user_upload") \
+                .filter("metadata->>source", "eq", source_name) \
+                .filter("metadata->>user_id", "eq", str(user_id)) \
+                .execute()
+            if remaining.data:
+                raise RuntimeError("Supabase delete verification failed")
+
+            print(f"Deleted {matched_count} segments for uploaded source: {source_name} from Supabase")
             self._metadata_cache = None
+            return matched_count
         except Exception as e:
             print(f"Error deleting user upload {source_name}: {e}")
+            raise
 
 
 rag_engine = RAGEngine()

@@ -1,14 +1,17 @@
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Depends, Request, Response
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Depends, Request, Response, Query
 import os
 import re
 import time
 import logging
+import json
+import uuid
+import hashlib
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
 from typing import List, Optional
 from sqlalchemy.orm import Session
-from sqlalchemy import text as sa_text
-from datetime import datetime
+from sqlalchemy import text as sa_text, or_, cast, Text as SAText
+from datetime import datetime, timedelta, timezone
 
 from langchain_core.documents import Document
 from api.law_client import law_client
@@ -17,10 +20,11 @@ from engine.document_processor import document_processor
 from engine.legal_watch import legal_watch_engine
 import database
 import auth
-from database import User, Report, get_db, Subscription, Notification, APIKey
+from database import User, Report, get_db, Subscription, Notification, APIKey, UploadSource, GenerationJob
+from services.reporting import build_evidence_manifest, extract_answer_preview, sanitize_chat_history
 import logging
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 # Sync request model
 class SyncRequest(BaseModel):
@@ -31,6 +35,12 @@ class SyncRequest(BaseModel):
 # Setup Logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+
+def log_event(event: str, **fields):
+    """Emit one-line structured logs without storing user query/report content."""
+    safe = {"event": event, **{k: v for k, v in fields.items() if v is not None}}
+    logger.info(json.dumps(safe, ensure_ascii=False, default=str, separators=(",", ":")))
 
 app = FastAPI(title="JongLaw AI API")
 logger.info("JongLaw AI API Starting up... [Final RPC Fix Applied]")
@@ -95,6 +105,33 @@ app.add_middleware(
 # 텍스트 응답(히스토리/컨텍스트 등) 압축 — 원거리 전송량을 크게 줄인다
 from fastapi.middleware.gzip import GZipMiddleware
 app.add_middleware(GZipMiddleware, minimum_size=1024)
+
+
+@app.middleware("http")
+async def request_observability(request: Request, call_next):
+    request_id = request.headers.get("x-request-id") or str(uuid.uuid4())
+    started = time.perf_counter()
+    try:
+        response = await call_next(request)
+    except Exception:
+        log_event(
+            "http_request_error",
+            request_id=request_id,
+            method=request.method,
+            path=request.url.path,
+            duration_ms=round((time.perf_counter() - started) * 1000),
+        )
+        raise
+    response.headers["X-Request-Id"] = request_id
+    log_event(
+        "http_request",
+        request_id=request_id,
+        method=request.method,
+        path=request.url.path,
+        status=response.status_code,
+        duration_ms=round((time.perf_counter() - started) * 1000),
+    )
+    return response
 
 @app.get("/")
 async def root():
@@ -297,6 +334,65 @@ async def search_laws(query: str, page: int = 1, current_user: User = Depends(au
     enforce_rate_limit(db, current_user.id, "laws-search", 60)
     return await law_client.search_laws(query, page=page)
 
+
+def _legacy_upload_id(user_id: int, source_name: str) -> str:
+    return "legacy-" + hashlib.sha256(f"{user_id}:{source_name}".encode("utf-8")).hexdigest()[:32]
+
+
+def _sync_legacy_upload_sources(db: Session, user_id: int):
+    """Backfill the file registry from existing vector metadata without rewriting chunks."""
+    details = rag_engine.get_user_upload_details(user_id)
+    existing_ids = {
+        row[0] for row in db.query(UploadSource.id).filter(UploadSource.user_id == user_id).all()
+    }
+    changed = False
+    for item in details:
+        source_id = str(item.get("upload_id") or _legacy_upload_id(user_id, item["source"]))
+        if source_id in existing_ids:
+            continue
+        uploaded_at = None
+        if item.get("uploaded_at"):
+            try:
+                uploaded_at = datetime.fromisoformat(str(item["uploaded_at"]).replace("Z", "+00:00")).replace(tzinfo=None)
+            except ValueError:
+                uploaded_at = None
+        db.add(UploadSource(
+            id=source_id,
+            user_id=user_id,
+            source_name=item["source"],
+            content_hash=item.get("content_hash"),
+            file_size=item.get("file_size"),
+            file_type=item.get("file_type"),
+            version=item.get("version") or 1,
+            status="active",
+            chunk_count=item.get("chunk_count") or 0,
+            preview=item.get("preview") or "",
+            created_at=uploaded_at or datetime.utcnow(),
+        ))
+        changed = True
+    if changed:
+        try:
+            db.commit()
+        except Exception:
+            db.rollback()
+            logger.exception("legacy upload registry sync failed")
+
+
+def _serialize_upload(source: UploadSource):
+    return {
+        "id": source.id,
+        "source": source.source_name,
+        "file_size": source.file_size,
+        "file_type": source.file_type,
+        "version": source.version,
+        "status": source.status,
+        "chunk_count": source.chunk_count,
+        "preview": source.preview or "",
+        "created_at": source.created_at,
+        "updated_at": source.updated_at,
+        "deleted_at": source.deleted_at,
+    }
+
 @app.post("/upload")
 @limiter.limit("10/minute")
 async def upload_document(
@@ -306,7 +402,8 @@ async def upload_document(
     db: Session = Depends(get_db)
 ):
     enforce_rate_limit(db, current_user.id, "upload", 20)  # 시간당 20건
-    filename = file.filename.lower()
+    original_filename = (file.filename or "upload").strip()[:500]
+    filename = original_filename.lower()
     is_pdf = filename.endswith(".pdf")
     is_hwpx = filename.endswith(".hwpx")
 
@@ -317,12 +414,52 @@ async def upload_document(
     if len(content) > MAX_FILE_SIZE:
         raise HTTPException(status_code=413, detail="File too large. Maximum size is 10MB.")
 
-    if is_pdf:
-        docs = document_processor.process_pdf(content, file.filename)
-    else:
-        docs = document_processor.process_hwpx(content, file.filename)
+    content_hash = hashlib.sha256(content).hexdigest()
+    duplicate = db.query(UploadSource).filter(
+        UploadSource.user_id == current_user.id,
+        UploadSource.content_hash == content_hash,
+    ).first()
+    if duplicate:
+        action = "휴지통에서 복원" if duplicate.status == "deleted" else "기존 소스를 사용"
+        raise HTTPException(
+            status_code=409,
+            detail=f"동일한 파일이 이미 등록되어 있습니다(v{duplicate.version}). {action}해 주세요.",
+        )
+
+    latest_version = db.query(UploadSource).filter(
+        UploadSource.user_id == current_user.id,
+        UploadSource.source_name == original_filename,
+    ).order_by(UploadSource.version.desc()).first()
+    version = (latest_version.version + 1) if latest_version else 1
+    upload_id = str(uuid.uuid4())
+    source_row = UploadSource(
+        id=upload_id,
+        user_id=current_user.id,
+        source_name=original_filename,
+        content_hash=content_hash,
+        file_size=len(content),
+        file_type="pdf" if is_pdf else "hwpx",
+        version=version,
+        status="processing",
+    )
+    db.add(source_row)
+    db.commit()
+
+    try:
+        if is_pdf:
+            docs = document_processor.process_pdf(content, original_filename)
+        else:
+            docs = document_processor.process_hwpx(content, original_filename)
+    except Exception as exc:
+        source_row.status = "error"
+        source_row.error = str(exc)[:1000]
+        db.commit()
+        raise HTTPException(status_code=400, detail="문서 처리 중 오류가 발생했습니다.")
 
     if not docs:
+        source_row.status = "error"
+        source_row.error = "문서에서 텍스트를 추출하지 못했습니다."
+        db.commit()
         raise HTTPException(
             status_code=400,
             detail="문서에서 텍스트를 추출하지 못했습니다. 스캔본(이미지) PDF이거나 텍스트 레이어가 없는 파일일 수 있습니다. 텍스트 기반 PDF로 다시 시도해 주세요."
@@ -330,18 +467,199 @@ async def upload_document(
 
     # 서버리스(Vercel Fluid)에서는 응답 후 백그라운드 실행이 보장되지 않으므로 요청 안에서 처리한다.
     # 함수 타임아웃 300s, 50청크 배치 임베딩이라 대형 문서(200+청크)도 1~2분 내 완료된다.
-    await rag_engine.add_documents(docs, user_id=current_user.id)
-    return {"message": f"File {file.filename} uploaded and processed", "status": "done"}
+    uploaded_at = datetime.now(timezone.utc).isoformat()
+    for doc in docs:
+        doc.metadata.update({
+            "upload_id": upload_id,
+            "source": original_filename,
+            "type": "user_upload",
+            "content_hash": content_hash,
+            "file_size": len(content),
+            "file_type": "pdf" if is_pdf else "hwpx",
+            "version": version,
+            "uploaded_at": uploaded_at,
+        })
+    try:
+        chunk_count = await rag_engine.add_documents(docs, user_id=current_user.id)
+    except Exception as exc:
+        try:
+            rag_engine.purge_user_upload(original_filename, current_user.id, upload_id=upload_id)
+        except Exception:
+            pass
+        source_row.status = "error"
+        source_row.error = str(exc)[:1000]
+        db.commit()
+        log_event("upload_failed", user_id=current_user.id, upload_id=upload_id, file_type=source_row.file_type)
+        raise HTTPException(status_code=502, detail="임베딩 저장에 실패했습니다. 잠시 후 다시 시도해 주세요.")
+
+    # 같은 파일명의 이전 버전은 보존하되 검색에서는 제외한다.
+    db.query(UploadSource).filter(
+        UploadSource.user_id == current_user.id,
+        UploadSource.source_name == original_filename,
+        UploadSource.id != upload_id,
+        UploadSource.status == "active",
+    ).update({"status": "archived", "updated_at": datetime.utcnow()}, synchronize_session=False)
+    source_row.status = "active"
+    source_row.chunk_count = chunk_count
+    source_row.preview = (docs[0].page_content if docs else "")[:600]
+    db.commit()
+    log_event("upload_completed", user_id=current_user.id, upload_id=upload_id, chunks=chunk_count, version=version)
+    return {
+        "message": f"File {original_filename} uploaded and processed",
+        "status": "done",
+        "source": _serialize_upload(source_row),
+    }
 
 @app.get("/uploads")
-async def get_uploads(current_user: User = Depends(auth.get_current_user)):
-    return rag_engine.get_user_uploads(user_id=current_user.id)
+async def get_uploads(
+    q: str = Query(default="", max_length=200),
+    status: str = Query(default="active", pattern="^(active|archived|deleted|error|all)$"),
+    current_user: User = Depends(auth.get_current_user),
+    db: Session = Depends(get_db),
+):
+    _sync_legacy_upload_sources(db, current_user.id)
+    query = db.query(UploadSource).filter(UploadSource.user_id == current_user.id)
+    if status != "all":
+        query = query.filter(UploadSource.status == status)
+    if q.strip():
+        query = query.filter(UploadSource.source_name.ilike(f"%{q.strip()}%"))
+    rows = query.order_by(UploadSource.created_at.desc()).all()
+    return {"items": [_serialize_upload(row) for row in rows], "total": len(rows)}
 
-@app.delete("/uploads/{source}")
-async def delete_upload(source: str, current_user: User = Depends(auth.get_current_user)):
-    # source is the unique filename/source name
-    rag_engine.delete_user_upload(source, user_id=current_user.id)
-    return {"message": f"Source {source} deleted"}
+
+@app.get("/uploads/{source_id}/preview")
+async def preview_upload(
+    source_id: str,
+    q: str = Query(default="", max_length=200),
+    current_user: User = Depends(auth.get_current_user),
+    db: Session = Depends(get_db),
+):
+    source = db.query(UploadSource).filter(
+        UploadSource.id == source_id,
+        UploadSource.user_id == current_user.id,
+    ).first()
+    if not source:
+        raise HTTPException(status_code=404, detail="학습 소스를 찾을 수 없습니다.")
+    upload_id = None if source.id.startswith("legacy-") else source.id
+    chunks = rag_engine.get_upload_chunks(source.source_name, current_user.id, upload_id, q, limit=5)
+    return {"source": _serialize_upload(source), "chunks": chunks, "query": q}
+
+
+@app.delete("/uploads/{source_id}")
+async def trash_upload(
+    source_id: str,
+    current_user: User = Depends(auth.get_current_user),
+    db: Session = Depends(get_db),
+):
+    source = db.query(UploadSource).filter(
+        UploadSource.id == source_id,
+        UploadSource.user_id == current_user.id,
+    ).first()
+    if not source:
+        raise HTTPException(status_code=404, detail="삭제할 학습 소스를 찾을 수 없습니다.")
+    source.status = "deleted"
+    source.deleted_at = datetime.utcnow()
+    db.commit()
+    log_event("upload_trashed", user_id=current_user.id, upload_id=source.id)
+    return {"message": "Source moved to trash", "source": _serialize_upload(source)}
+
+
+@app.post("/uploads/{source_id}/restore")
+async def restore_upload(
+    source_id: str,
+    current_user: User = Depends(auth.get_current_user),
+    db: Session = Depends(get_db),
+):
+    source = db.query(UploadSource).filter(
+        UploadSource.id == source_id,
+        UploadSource.user_id == current_user.id,
+    ).first()
+    if not source or source.status != "deleted":
+        raise HTTPException(status_code=404, detail="복원할 학습 소스를 찾을 수 없습니다.")
+    db.query(UploadSource).filter(
+        UploadSource.user_id == current_user.id,
+        UploadSource.source_name == source.source_name,
+        UploadSource.id != source.id,
+        UploadSource.status == "active",
+    ).update({"status": "archived", "updated_at": datetime.utcnow()}, synchronize_session=False)
+    source.status = "active"
+    source.deleted_at = None
+    db.commit()
+    log_event("upload_restored", user_id=current_user.id, upload_id=source.id)
+    return {"message": "Source restored", "source": _serialize_upload(source)}
+
+
+@app.post("/uploads/{source_id}/activate")
+async def activate_upload_version(
+    source_id: str,
+    current_user: User = Depends(auth.get_current_user),
+    db: Session = Depends(get_db),
+):
+    source = db.query(UploadSource).filter(
+        UploadSource.id == source_id,
+        UploadSource.user_id == current_user.id,
+        UploadSource.status == "archived",
+    ).first()
+    if not source:
+        raise HTTPException(status_code=404, detail="활성화할 이전 버전을 찾을 수 없습니다.")
+    db.query(UploadSource).filter(
+        UploadSource.user_id == current_user.id,
+        UploadSource.source_name == source.source_name,
+        UploadSource.id != source.id,
+        UploadSource.status == "active",
+    ).update({"status": "archived", "updated_at": datetime.utcnow()}, synchronize_session=False)
+    source.status = "active"
+    source.deleted_at = None
+    db.commit()
+    log_event("upload_version_activated", user_id=current_user.id, upload_id=source.id, version=source.version)
+    return {"message": "Source version activated", "source": _serialize_upload(source)}
+
+
+@app.delete("/uploads/{source_id}/purge")
+async def purge_upload(
+    source_id: str,
+    current_user: User = Depends(auth.get_current_user),
+    db: Session = Depends(get_db),
+):
+    source = db.query(UploadSource).filter(
+        UploadSource.id == source_id,
+        UploadSource.user_id == current_user.id,
+        UploadSource.status == "deleted",
+    ).first()
+    if not source:
+        raise HTTPException(status_code=404, detail="휴지통의 학습 소스를 찾을 수 없습니다.")
+    upload_id = None if source.id.startswith("legacy-") else source.id
+    deleted_chunks = rag_engine.purge_user_upload(source.source_name, current_user.id, upload_id)
+    db.delete(source)
+    db.commit()
+    log_event("upload_purged", user_id=current_user.id, upload_id=source_id, chunks=deleted_chunks)
+    return {"message": "Source permanently deleted", "deleted_chunks": deleted_chunks}
+
+@app.delete("/uploads")
+async def delete_upload(
+    source: str = Query(..., min_length=1, max_length=500),
+    current_user: User = Depends(auth.get_current_user),
+    db: Session = Depends(get_db),
+):
+    # 이전 프론트엔드와의 호환 경로. 영구 삭제 대신 동일하게 휴지통으로 이동한다.
+    _sync_legacy_upload_sources(db, current_user.id)
+    rows = db.query(UploadSource).filter(
+        UploadSource.user_id == current_user.id,
+        UploadSource.source_name == source,
+        UploadSource.status != "deleted",
+    ).all()
+    if not rows:
+        raise HTTPException(status_code=404, detail="삭제할 학습 소스를 찾을 수 없습니다.")
+    now = datetime.utcnow()
+    for row in rows:
+        row.status = "deleted"
+        row.deleted_at = now
+    db.commit()
+    return {
+        "message": f"Source {source} moved to trash",
+        "source": source,
+        "affected_versions": len(rows),
+    }
 
 @app.get("/query-context")
 async def query_context(
@@ -404,6 +722,12 @@ async def query_context(
         docs = []
         if rag_engine.supabase_client:
             user_id_str = str(current_user.id) if current_user else None
+            upload_registry = db.query(UploadSource).filter(UploadSource.user_id == current_user.id).all()
+            active_upload_ids = {s.id for s in upload_registry if s.status == "active" and not s.id.startswith("legacy-")}
+            inactive_legacy_sources = {
+                s.source_name for s in upload_registry
+                if s.id.startswith("legacy-") and s.status != "active"
+            }
             response = rag_engine.supabase_client.rpc(
                 "match_documents",
                 {
@@ -416,8 +740,14 @@ async def query_context(
             for row in response.data:
                 metadata = row.get('metadata', {})
                 # 업로드 자료는 본인 것만 (user_id는 JSON 숫자라 문자열로 맞춰 비교)
-                if metadata.get("type") == "user_upload" and str(metadata.get("user_id")) != str(user_id_str):
-                    continue
+                if metadata.get("type") == "user_upload":
+                    if str(metadata.get("user_id")) != str(user_id_str):
+                        continue
+                    upload_id = metadata.get("upload_id")
+                    if upload_id and str(upload_id) not in active_upload_ids:
+                        continue
+                    if not upload_id and metadata.get("source") in inactive_legacy_sources:
+                        continue
                 metadata['similarity'] = row.get('similarity')
                 docs.append(Document(page_content=row.get('content', ''), metadata=metadata))
 
@@ -429,7 +759,7 @@ async def query_context(
             before = len(docs)
             docs = [d for d in docs
                     if d.metadata.get("type") != "user_upload" or d.metadata.get("source") in relevant]
-            logger.info(f"[query-context] upload relevance kept={relevant} docs {before}->{len(docs)}")
+            logger.info("[query-context] upload relevance selected=%s docs_before=%s docs_after=%s", len(relevant), before, len(docs))
 
         # 키워드 겹침 + 유사도로 재정렬한 뒤 상위 15개 선택
         # (정렬 전에 자르면 법령이 업로드 청크에 밀려 잘리므로 반드시 정렬 후 슬라이스)
@@ -449,15 +779,26 @@ async def query_context(
             if content not in seen_contents:
                 context_parts.append(f"[{src}] {content}")
                 seen_contents.add(content)
-                if src not in [s['source'] for s in sources_list]:
-                    sources_list.append({"source": src, "type": src_type})
+                source_key = (src, doc.metadata.get("article_no") or "")
+                if source_key not in [(s['source'], s.get('article_no') or "") for s in sources_list]:
+                    sources_list.append({
+                        "source": src,
+                        "type": src_type,
+                        "article_no": doc.metadata.get("article_no"),
+                        "mst": doc.metadata.get("mst"),
+                        "url": doc.metadata.get("url"),
+                        "upload_id": doc.metadata.get("upload_id"),
+                        "version": doc.metadata.get("version"),
+                        "retrieved_at": datetime.now(timezone.utc).isoformat(),
+                    })
 
         context = "\n\n".join(context_parts[:10])
         
         return {
             "context": context,
             "sources": sources_list,
-            "intent": intent
+            "intent": intent,
+            "evidence_manifest": build_evidence_manifest(sources_list),
         }
     except Exception as e:
         logger.error(f"Error in query-context: {e}")
@@ -566,6 +907,236 @@ async def verify_citations(payload: VerifyCitationsRequest, current_user: User =
                 results.append({"law": law_name, "article": a, "status": "error"})
     return {"citations": results}
 
+# --- Persistent AI Generation Jobs & Usage ---
+
+ACTIVE_JOB_STATUSES = {"queued", "running", "generated"}
+FINAL_JOB_STATUSES = {"complete", "error", "cancelled"}
+
+
+def _serialize_job(job: GenerationJob, include_result: bool = True):
+    payload = {
+        "id": job.id,
+        "query": job.query,
+        "kind": job.kind,
+        "status": job.status,
+        "stage": job.stage,
+        "progress": job.progress,
+        "model": job.model,
+        "intent": job.intent,
+        "sources": job.sources or [],
+        "token_usage": job.token_usage or {},
+        "estimated_cost_micros": job.estimated_cost_micros or 0,
+        "report_id": job.report_id,
+        "error": job.error,
+        "created_at": job.created_at,
+        "updated_at": job.updated_at,
+    }
+    if include_result:
+        payload["result"] = job.result
+    return payload
+
+
+def _usage_value(usage: dict, *keys: str) -> int:
+    for key in keys:
+        value = (usage or {}).get(key)
+        if isinstance(value, (int, float)):
+            return max(0, int(value))
+    return 0
+
+
+def _estimate_cost_micros(usage: dict) -> int:
+    input_tokens = _usage_value(usage, "inputTokens", "input_tokens", "promptTokens", "prompt_tokens")
+    output_tokens = _usage_value(usage, "outputTokens", "output_tokens", "completionTokens", "completion_tokens")
+    input_rate = float(os.getenv("AI_INPUT_USD_PER_MILLION", "0") or 0)
+    output_rate = float(os.getenv("AI_OUTPUT_USD_PER_MILLION", "0") or 0)
+    usd = (input_tokens * input_rate + output_tokens * output_rate) / 1_000_000
+    return max(0, int(round(usd * 1_000_000)))
+
+
+def _monthly_usage(db: Session, user_id: int):
+    now = datetime.utcnow()
+    month_start = datetime(now.year, now.month, 1)
+    jobs = db.query(GenerationJob).filter(
+        GenerationJob.user_id == user_id,
+        GenerationJob.created_at >= month_start,
+    ).all()
+    input_tokens = output_tokens = total_tokens = cost_micros = 0
+    for job in jobs:
+        usage = job.token_usage or {}
+        input_tokens += _usage_value(usage, "inputTokens", "input_tokens", "promptTokens", "prompt_tokens")
+        output_tokens += _usage_value(usage, "outputTokens", "output_tokens", "completionTokens", "completion_tokens")
+        total_tokens += _usage_value(usage, "totalTokens", "total_tokens")
+        cost_micros += job.estimated_cost_micros or 0
+    if total_tokens == 0:
+        total_tokens = input_tokens + output_tokens
+    limit = int(os.getenv("MONTHLY_AI_TOKEN_LIMIT", "2000000") or 2000000)
+    return {
+        "period": month_start.strftime("%Y-%m"),
+        "input_tokens": input_tokens,
+        "output_tokens": output_tokens,
+        "total_tokens": total_tokens,
+        "estimated_cost_micros": cost_micros,
+        "token_limit": limit,
+        "remaining_tokens": max(0, limit - total_tokens),
+        "request_count": len(jobs),
+    }
+
+
+class CreateJobRequest(BaseModel):
+    query: str = Field(min_length=1, max_length=20000)
+    kind: str = Field(default="consultation", max_length=30)
+    model: str = Field(default="openai/gpt-5.6-sol", max_length=100)
+
+
+class UpdateJobRequest(BaseModel):
+    status: Optional[str] = Field(default=None, max_length=20)
+    stage: Optional[str] = Field(default=None, max_length=100)
+    progress: Optional[int] = Field(default=None, ge=0, le=100)
+    intent: Optional[str] = Field(default=None, max_length=30)
+    result: Optional[str] = Field(default=None, max_length=150000)
+    sources: Optional[List[dict]] = None
+    token_usage: Optional[dict] = None
+    report_id: Optional[int] = None
+    error: Optional[str] = Field(default=None, max_length=2000)
+
+
+@app.post("/jobs")
+async def create_generation_job(
+    payload: CreateJobRequest,
+    current_user: User = Depends(auth.get_current_user),
+    db: Session = Depends(get_db),
+):
+    enforce_rate_limit(db, current_user.id, "generation-job", 60)
+    usage = _monthly_usage(db, current_user.id)
+    if usage["total_tokens"] >= usage["token_limit"]:
+        raise HTTPException(status_code=429, detail="이번 달 AI 사용 한도에 도달했습니다.")
+    job = GenerationJob(
+        id=str(uuid.uuid4()),
+        user_id=current_user.id,
+        query=payload.query,
+        kind=payload.kind,
+        model=payload.model,
+        status="queued",
+        stage="요청 접수",
+        progress=5,
+    )
+    db.add(job)
+    db.commit()
+    db.refresh(job)
+    log_event("generation_job_created", user_id=current_user.id, job_id=job.id, kind=job.kind, model=job.model)
+    return _serialize_job(job)
+
+
+@app.patch("/jobs/{job_id}")
+async def update_generation_job(
+    job_id: str,
+    payload: UpdateJobRequest,
+    current_user: User = Depends(auth.get_current_user),
+    db: Session = Depends(get_db),
+):
+    job = db.query(GenerationJob).filter(
+        GenerationJob.id == job_id,
+        GenerationJob.user_id == current_user.id,
+    ).first()
+    if not job:
+        raise HTTPException(status_code=404, detail="AI 작업을 찾을 수 없습니다.")
+    # AI 생성이 이미 끝난 뒤 브라우저 스트림만 끊긴 경우, 늦게 도착한
+    # 클라이언트 오류가 생성 결과를 덮어쓰지 못하게 한다. result는 서버가
+    # 보관하고 있으므로 아직 저장 전이면 generated 상태로 복구할 수 있다.
+    protect_generated_result = bool(payload.status == "error" and job.result)
+    if payload.status:
+        allowed = ACTIVE_JOB_STATUSES | FINAL_JOB_STATUSES
+        if payload.status not in allowed:
+            raise HTTPException(status_code=400, detail="지원하지 않는 작업 상태입니다.")
+        if protect_generated_result:
+            job.status = "complete" if job.report_id else "generated"
+        else:
+            job.status = payload.status
+    if payload.stage is not None and not protect_generated_result:
+        job.stage = payload.stage
+    if payload.progress is not None:
+        job.progress = payload.progress
+    if payload.intent is not None:
+        job.intent = payload.intent
+    if payload.result is not None:
+        job.result = payload.result
+    if payload.sources is not None:
+        job.sources = payload.sources
+    if payload.token_usage is not None:
+        job.token_usage = payload.token_usage
+        job.estimated_cost_micros = _estimate_cost_micros(payload.token_usage)
+    if payload.report_id is not None:
+        owned_report = db.query(Report).filter(
+            Report.id == payload.report_id,
+            Report.user_id == current_user.id,
+        ).first()
+        if not owned_report:
+            raise HTTPException(status_code=400, detail="연결할 보고서를 찾을 수 없습니다.")
+        job.report_id = payload.report_id
+    if payload.error is not None:
+        job.error = payload.error
+    job.updated_at = datetime.utcnow()
+    db.commit()
+    db.refresh(job)
+    log_event("generation_job_updated", user_id=current_user.id, job_id=job.id, status=job.status, progress=job.progress)
+    return _serialize_job(job)
+
+
+@app.get("/jobs")
+async def list_generation_jobs(
+    recoverable: bool = False,
+    limit: int = Query(default=10, ge=1, le=50),
+    current_user: User = Depends(auth.get_current_user),
+    db: Session = Depends(get_db),
+):
+    stale_before = datetime.utcnow() - timedelta(minutes=20)
+    stale = db.query(GenerationJob).filter(
+        GenerationJob.user_id == current_user.id,
+        GenerationJob.status.in_(["queued", "running"]),
+        GenerationJob.updated_at < stale_before,
+    ).all()
+    for job in stale:
+        job.status = "error"
+        job.stage = "작업 중단"
+        job.error = "응답 완료 전에 작업이 중단되었습니다. 다시 실행해 주세요."
+    if stale:
+        db.commit()
+    query = db.query(GenerationJob).filter(GenerationJob.user_id == current_user.id)
+    if recoverable:
+        query = query.filter(
+            GenerationJob.status.in_(list(ACTIVE_JOB_STATUSES))
+            | (
+                GenerationJob.result.isnot(None)
+                & GenerationJob.report_id.is_(None)
+            )
+        )
+    rows = query.order_by(GenerationJob.created_at.desc()).limit(limit).all()
+    return {"items": [_serialize_job(row) for row in rows]}
+
+
+@app.get("/jobs/{job_id}")
+async def get_generation_job(
+    job_id: str,
+    current_user: User = Depends(auth.get_current_user),
+    db: Session = Depends(get_db),
+):
+    job = db.query(GenerationJob).filter(
+        GenerationJob.id == job_id,
+        GenerationJob.user_id == current_user.id,
+    ).first()
+    if not job:
+        raise HTTPException(status_code=404, detail="AI 작업을 찾을 수 없습니다.")
+    return _serialize_job(job)
+
+
+@app.get("/usage")
+async def get_ai_usage(
+    current_user: User = Depends(auth.get_current_user),
+    db: Session = Depends(get_db),
+):
+    return _monthly_usage(db, current_user.id)
+
+
 # --- History Endpoints ---
 
 class SaveReportRequest(BaseModel):
@@ -573,6 +1144,8 @@ class SaveReportRequest(BaseModel):
     answer: str
     engine: Optional[str] = None
     sources: Optional[List[dict]] = None
+    client_request_id: Optional[str] = Field(default=None, max_length=64)
+    generation_job_id: Optional[str] = Field(default=None, max_length=64)
 
 @app.post("/history")
 async def save_report_history(
@@ -580,37 +1153,96 @@ async def save_report_history(
     current_user: User = Depends(auth.get_current_user),
     db: Session = Depends(get_db)
 ):
-    # 채팅이 Vercel /api/chat(gpt-5.5)로 옮겨가면서 백엔드 /query의 히스토리 저장이
+    # 채팅이 Vercel /api/chat(GPT-5.6 Sol)로 옮겨가면서 백엔드 /query의 히스토리 저장이
     # 더 이상 호출되지 않으므로, REPORT 생성 후 프론트가 이 엔드포인트로 저장한다.
+    # 네트워크 타임아웃 뒤 클라이언트가 재시도해도 같은 사용자의 동일 보고서를
+    # 다시 만들지 않고 기존 ID를 반환한다.
+    if payload.client_request_id:
+        existing = db.query(Report).filter(
+            Report.user_id == current_user.id,
+            Report.client_request_id == payload.client_request_id,
+        ).first()
+        if existing:
+            return {"id": existing.id, "saved": True, "duplicate": True}
+
     new_report = Report(
         user_id=current_user.id,
+        client_request_id=payload.client_request_id,
         query=payload.query,
         answer=payload.answer,
         engine=payload.engine,
-        sources=payload.sources or []
+        sources=payload.sources or [],
+        evidence_manifest=build_evidence_manifest(payload.sources or []),
+        generation_job_id=payload.generation_job_id,
     )
     db.add(new_report)
     db.commit()
     db.refresh(new_report)
-    return {"id": new_report.id}
+    if payload.generation_job_id:
+        job = db.query(GenerationJob).filter(
+            GenerationJob.id == payload.generation_job_id,
+            GenerationJob.user_id == current_user.id,
+        ).first()
+        if job:
+            job.report_id = new_report.id
+            job.status = "complete"
+            job.stage = "보고서 저장 완료"
+            job.progress = 100
+            db.commit()
+    return {"id": new_report.id, "saved": True, "duplicate": False}
 
 @app.get("/history")
-async def get_history(current_user: User = Depends(auth.get_current_user), db: Session = Depends(get_db)):
-    reports = db.query(Report).filter(Report.user_id == current_user.id).order_by(Report.created_at.desc()).all()
-    # 목록 응답 슬림화: chat_history(후속 대화 전문)는 목록에서 제외하고 상세(GET /history/{id})에서만 내려준다.
-    # (리포트 수십 개면 수백 KB → 원거리 전송이 히스토리 로딩을 느리게 만드는 주범)
-    return [
+async def get_history(
+    q: str = Query(default="", max_length=200),
+    tag: str = Query(default="", max_length=30),
+    date_from: Optional[str] = Query(default=None),
+    date_to: Optional[str] = Query(default=None),
+    page: int = Query(default=1, ge=1),
+    limit: int = Query(default=20, ge=1, le=50),
+    current_user: User = Depends(auth.get_current_user),
+    db: Session = Depends(get_db),
+):
+    query = db.query(Report).filter(Report.user_id == current_user.id)
+    if q.strip():
+        pattern = f"%{q.strip()}%"
+        query = query.filter(or_(Report.query.ilike(pattern), Report.answer.ilike(pattern)))
+    if tag.strip():
+        query = query.filter(cast(Report.tags, SAText).ilike(f'%"{tag.strip()}"%'))
+    try:
+        if date_from:
+            query = query.filter(Report.created_at >= datetime.fromisoformat(date_from))
+        if date_to:
+            end = datetime.fromisoformat(date_to) + timedelta(days=1)
+            query = query.filter(Report.created_at < end)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="날짜 형식은 YYYY-MM-DD여야 합니다.")
+
+    total = query.count()
+    reports = query.order_by(Report.created_at.desc()).offset((page - 1) * limit).limit(limit).all()
+    # 이메일/질의 내용은 남기지 않고 내부 사용자 ID와 건수만 기록한다.
+    # 기기별 계정 매핑 문제와 실제 빈 히스토리를 운영 로그에서 구분하기 위함이다.
+    log_event("history_list", user_id=current_user.id, result_count=len(reports), total=total, page=page)
+    all_tag_rows = db.query(Report.tags).filter(Report.user_id == current_user.id).all()
+    available_tags = sorted({tag for row in all_tag_rows for tag in (row[0] or []) if isinstance(tag, str)})
+    items = [
         {
             "id": r.id,
             "query": r.query,
-            "answer": r.answer,
+            "answer_preview": extract_answer_preview(r.answer),
             "engine": r.engine,
-            "sources": r.sources,
             "tags": r.tags or [],
             "created_at": r.created_at,
         }
         for r in reports
     ]
+    return {
+        "items": items,
+        "total": total,
+        "page": page,
+        "limit": limit,
+        "has_more": page * limit < total,
+        "available_tags": available_tags,
+    }
 
 @app.get("/history/{report_id}")
 async def get_report_detail(report_id: int, current_user: User = Depends(auth.get_current_user), db: Session = Depends(get_db)):
@@ -651,6 +1283,68 @@ async def update_report_tags(
     report.tags = clean
     db.commit()
     return {"id": report.id, "tags": clean}
+
+
+class UpdateChatHistoryRequest(BaseModel):
+    messages: List[dict]
+
+
+@app.put("/history/{report_id}/chat")
+async def update_report_chat_history(
+    report_id: int,
+    payload: UpdateChatHistoryRequest,
+    current_user: User = Depends(auth.get_current_user),
+    db: Session = Depends(get_db),
+):
+    report = db.query(Report).filter(Report.id == report_id, Report.user_id == current_user.id).first()
+    if not report:
+        raise HTTPException(status_code=404, detail="Report not found")
+    report.chat_history = sanitize_chat_history(payload.messages)
+    db.commit()
+    log_event("report_chat_saved", user_id=current_user.id, report_id=report.id, messages=len(report.chat_history or []))
+    return {"id": report.id, "chat_history": report.chat_history}
+
+
+class UpdateEvidenceVerificationRequest(BaseModel):
+    citations: List[dict]
+
+
+@app.put("/history/{report_id}/evidence-verification")
+async def update_evidence_verification(
+    report_id: int,
+    payload: UpdateEvidenceVerificationRequest,
+    current_user: User = Depends(auth.get_current_user),
+    db: Session = Depends(get_db),
+):
+    report = db.query(Report).filter(Report.id == report_id, Report.user_id == current_user.id).first()
+    if not report:
+        raise HTTPException(status_code=404, detail="Report not found")
+    manifest = list(report.evidence_manifest or build_evidence_manifest(report.sources or []))
+    now = datetime.now(timezone.utc).isoformat()
+    for citation in (payload.citations or [])[:50]:
+        law = str(citation.get("law") or "").strip()
+        article = str(citation.get("article") or "").strip()
+        status = str(citation.get("status") or "error")
+        if not law or not article:
+            continue
+        target = next((item for item in manifest
+                       if law in str(item.get("source") or "") and str(item.get("article_no") or "") == article), None)
+        if target is None:
+            target = {
+                "source": law,
+                "type": "law",
+                "article_no": article,
+                "url": citation.get("url"),
+                "retrieved_at": now,
+            }
+            manifest.append(target)
+        target["verification"] = status
+        target["verified_at"] = now
+        if citation.get("url"):
+            target["url"] = citation["url"]
+    report.evidence_manifest = manifest
+    db.commit()
+    return {"id": report.id, "evidence_manifest": manifest}
 
 # --- Legal Watch Endpoints ---
 

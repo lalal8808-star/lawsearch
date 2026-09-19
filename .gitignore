@@ -38,3 +38,4 @@ chroma_db/
 *.swp
 *.swo
 .vercel
+.env*

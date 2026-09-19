@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { X, Lock, User, Mail, Loader2, Scale } from "lucide-react";
+import { X, Lock, User, Loader2, Scale } from "lucide-react";
 import api from "@/utils/api";
 import { useAuth } from "@/context/AuthContext";
 import { supabase } from "@/utils/supabase";
@@ -98,25 +98,25 @@ export default function AuthModal({ isOpen, onClose, initialMode = "login" }: Au
                         animate={{ opacity: 1 }}
                         exit={{ opacity: 0 }}
                         onClick={onClose}
-                        className="absolute inset-0 bg-black/60 backdrop-blur-sm"
+                        className="absolute inset-0 bg-secondary/35 backdrop-blur-sm"
                     />
                     <motion.div
                         initial={{ opacity: 0, scale: 0.95, y: 20 }}
                         animate={{ opacity: 1, scale: 1, y: 0 }}
                         exit={{ opacity: 0, scale: 0.95, y: 20 }}
-                        className="relative w-full max-w-md bg-[#0f0f0f] border border-white/10 rounded-3xl shadow-2xl overflow-hidden"
+                        className="relative w-full max-w-md bg-card text-secondary border border-border rounded-[18px] shadow-[0_30px_90px_rgba(23,34,57,0.2)] overflow-hidden"
                     >
                         <div className="p-8">
                             <div className="flex justify-between items-center mb-8">
                                 <div className="flex items-center gap-2">
-                                    <div className="w-8 h-8 bg-primary rounded-lg flex items-center justify-center">
-                                        <Scale size={18} className="text-white" />
+                                    <div className="w-9 h-9 bg-secondary rounded-lg flex items-center justify-center">
+                                        <Scale size={18} className="text-[#d7b77b]" />
                                     </div>
-                                    <h2 className="text-xl font-black tracking-tight uppercase">
-                                        {mode === "login" ? "Account Login" : mode === "signup" ? "Create Account" : "My Profile"}
+                                    <h2 className="editorial-serif text-xl font-semibold tracking-tight">
+                                        {mode === "login" ? "로그인" : mode === "signup" ? "계정 만들기" : "내 정보"}
                                     </h2>
                                 </div>
-                                <button onClick={onClose} className="text-muted hover:text-white transition-colors">
+                                <button onClick={onClose} aria-label="닫기" className="text-muted hover:text-secondary transition-colors">
                                     <X size={20} />
                                 </button>
                             </div>
@@ -132,7 +132,7 @@ export default function AuthModal({ isOpen, onClose, initialMode = "login" }: Au
                                             disabled={mode === "profile"}
                                             value={username}
                                             onChange={(e) => setUsername(e.target.value)}
-                                            className={`w-full bg-white/5 border border-white/10 rounded-xl py-3 pl-10 pr-4 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50 transition-all ${mode === "profile" ? "opacity-50 cursor-not-allowed" : ""}`}
+                                            className={`w-full bg-secondary/[0.035] border border-secondary/10 rounded-[9px] py-3 pl-10 pr-4 text-sm focus:outline-none focus:ring-2 focus:ring-accent/25 focus:border-accent/50 transition-all ${mode === "profile" ? "opacity-50 cursor-not-allowed" : ""}`}
                                             placeholder="Username"
                                         />
                                     </div>
@@ -148,7 +148,7 @@ export default function AuthModal({ isOpen, onClose, initialMode = "login" }: Au
                                                 required
                                                 value={nickname}
                                                 onChange={(e) => setNickname(e.target.value)}
-                                                className="w-full bg-white/5 border border-white/10 rounded-xl py-3 pl-10 pr-4 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50 transition-all"
+                                                className="w-full bg-secondary/[0.035] border border-secondary/10 rounded-[9px] py-3 pl-10 pr-4 text-sm focus:outline-none focus:ring-2 focus:ring-accent/25 focus:border-accent/50 transition-all"
                                                 placeholder="Nickname"
                                             />
                                         </div>
@@ -156,15 +156,15 @@ export default function AuthModal({ isOpen, onClose, initialMode = "login" }: Au
                                 )}
 
                                 {mode === "profile" && (
-                                    <div className="space-y-2 pt-4 border-t border-white/5">
-                                        <label className="text-[10px] font-bold text-white uppercase tracking-widest pl-1">Change Password (Optional)</label>
+                                    <div className="space-y-2 pt-4 border-t border-secondary/10">
+                                        <label className="text-[10px] font-bold text-secondary uppercase tracking-widest pl-1">Change Password (Optional)</label>
                                         <div className="relative">
                                             <Lock className="absolute left-3 top-1/2 -translate-y-1/2 text-muted" size={16} />
                                             <input
                                                 type="password"
                                                 value={currentPassword}
                                                 onChange={(e) => setCurrentPassword(e.target.value)}
-                                                className="w-full bg-white/5 border border-white/10 rounded-xl py-3 pl-10 pr-4 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50 transition-all"
+                                                className="w-full bg-secondary/[0.035] border border-secondary/10 rounded-[9px] py-3 pl-10 pr-4 text-sm focus:outline-none focus:ring-2 focus:ring-accent/25 focus:border-accent/50 transition-all"
                                                 placeholder="Current Password"
                                             />
                                         </div>
@@ -182,7 +182,7 @@ export default function AuthModal({ isOpen, onClose, initialMode = "login" }: Au
                                             required={mode !== "profile"}
                                             value={password}
                                             onChange={(e) => setPassword(e.target.value)}
-                                            className="w-full bg-white/5 border border-white/10 rounded-xl py-3 pl-10 pr-4 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50 transition-all"
+                                        className="w-full bg-secondary/[0.035] border border-secondary/10 rounded-[9px] py-3 pl-10 pr-4 text-sm focus:outline-none focus:ring-2 focus:ring-accent/25 focus:border-accent/50 transition-all"
                                             placeholder="••••••••"
                                         />
                                     </div>
@@ -200,7 +200,7 @@ export default function AuthModal({ isOpen, onClose, initialMode = "login" }: Au
                                                 required={mode === "signup" || (mode === "profile" && password !== "")}
                                                 value={confirmPassword}
                                                 onChange={(e) => setConfirmPassword(e.target.value)}
-                                                className="w-full bg-white/5 border border-white/10 rounded-xl py-3 pl-10 pr-4 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50 transition-all"
+                                                className="w-full bg-secondary/[0.035] border border-secondary/10 rounded-[9px] py-3 pl-10 pr-4 text-sm focus:outline-none focus:ring-2 focus:ring-accent/25 focus:border-accent/50 transition-all"
                                                 placeholder="••••••••"
                                             />
                                         </div>
@@ -216,7 +216,7 @@ export default function AuthModal({ isOpen, onClose, initialMode = "login" }: Au
                                 <button
                                     type="submit"
                                     disabled={loading}
-                                    className="w-full bg-primary hover:bg-primary/90 text-white font-black py-4 rounded-xl shadow-lg shadow-primary/20 transition-all flex items-center justify-center gap-2 text-sm uppercase tracking-widest"
+                                    className="w-full editorial-button font-bold py-3.5 transition-all flex items-center justify-center gap-2 text-sm tracking-wide"
                                 >
                                     {loading ? <Loader2 className="animate-spin" size={18} /> : mode === "login" ? "Sign In" : mode === "signup" ? "Register Now" : "Update Profile"}
                                 </button>
@@ -226,9 +226,9 @@ export default function AuthModal({ isOpen, onClose, initialMode = "login" }: Au
                                 <>
                                     <div className="relative my-8 text-center">
                                         <div className="absolute inset-0 flex items-center">
-                                            <div className="w-full border-t border-white/5"></div>
+                                            <div className="w-full border-t border-secondary/10"></div>
                                         </div>
-                                        <div className="relative inline-block px-4 bg-[#0f0f0f] text-[10px] font-bold text-muted uppercase tracking-widest">
+                                        <div className="relative inline-block px-4 bg-card text-[10px] font-bold text-muted uppercase tracking-widest">
                                             Or continue with
                                         </div>
                                     </div>
@@ -244,7 +244,7 @@ export default function AuthModal({ isOpen, onClose, initialMode = "login" }: Au
                                             });
                                             if (error) setError(error.message);
                                         }}
-                                        className="w-full bg-white/5 hover:bg-white/10 text-white font-bold py-3 rounded-xl border border-white/10 transition-all flex items-center justify-center gap-3 text-sm"
+                                        className="w-full bg-white hover:bg-secondary/[0.035] text-secondary font-bold py-3 rounded-[9px] border border-secondary/15 transition-all flex items-center justify-center gap-3 text-sm"
                                     >
                                         <svg className="w-5 h-5" viewBox="0 0 24 24">
                                             <path
@@ -285,8 +285,8 @@ export default function AuthModal({ isOpen, onClose, initialMode = "login" }: Au
                             )}
                         </div>
 
-                        <div className="bg-white/5 p-4 text-center border-t border-white/5">
-                            <span className="text-[9px] font-bold text-muted uppercase tracking-[0.2em]">Secure Authentication System</span>
+                        <div className="bg-secondary/[0.025] p-4 text-center border-t border-secondary/10">
+                            <span className="text-[9px] font-bold text-muted uppercase tracking-[0.16em]">Secure Authentication</span>
                         </div>
                     </motion.div>
                 </div>

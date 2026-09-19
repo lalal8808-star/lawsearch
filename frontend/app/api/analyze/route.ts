@@ -1,9 +1,9 @@
 import { generateText } from 'ai';
 
-// PDF/이미지 파싱 + gpt-5.5 분석까지 한 요청에서 처리하므로 기본 타임아웃보다 여유가 필요하다.
+// PDF/이미지 파싱 + GPT-5.6 Sol 분석까지 한 요청에서 처리하므로 기본 타임아웃보다 여유가 필요하다.
 export const maxDuration = 300;
 import { createClient } from '@supabase/supabase-js';
-// @ts-ignore
+// @ts-expect-error pdf-parse v1 has no compatible ESM type declaration
 import pdf from 'pdf-parse/lib/pdf-parse.js';
 
 export async function POST(req: Request) {
@@ -130,7 +130,7 @@ export async function POST(req: Request) {
 
     // 5. Vercel AI Gateway 경유 분석 요청 (인증은 VERCEL_OIDC_TOKEN 자동 처리)
     const { text } = await generateText({
-      model: 'openai/gpt-5.5',
+      model: 'openai/gpt-5.6-sol',
       messages,
       temperature: 0,
       maxOutputTokens: 4000,
@@ -156,7 +156,7 @@ export async function POST(req: Request) {
         status: 200,
         headers: { 'Content-Type': 'application/json' }
       });
-    } catch (parseErr) {
+    } catch {
       console.error('JSON Parsing failed on response:', text);
       return new Response(
         JSON.stringify({ 

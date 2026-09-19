@@ -2,7 +2,7 @@ import axios from "axios";
 import { supabase } from "./supabase";
 
 const getBaseUrl = () => {
-    let url = process.env.NEXT_PUBLIC_API_URL;
+    const url = process.env.NEXT_PUBLIC_API_URL;
     if (url) {
         return url.endsWith("/") ? url.slice(0, -1) : url;
     }

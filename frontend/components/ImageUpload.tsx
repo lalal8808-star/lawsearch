@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useRef } from "react";
-import { Image as ImageIcon, X, FileText, UploadCloud, AlertCircle } from "lucide-react";
+import { X, FileText, UploadCloud } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 
 interface ImageUploadProps {
@@ -68,6 +68,7 @@ export default function ImageUpload({ onUpload, onClear, busy }: ImageUploadProp
                         className="relative w-11 h-11 rounded-xl overflow-hidden border-2 border-primary/50 group shadow-lg flex items-center justify-center bg-white/5"
                     >
                         {fileType === "image" ? (
+                            // eslint-disable-next-line @next/next/no-img-element
                             <img src={preview} alt="Preview" className="w-full h-full object-cover" />
                         ) : (
                             <div className="flex flex-col items-center justify-center gap-1">
