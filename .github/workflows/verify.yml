@@ -39,3 +39,6 @@ jobs:
           SUPABASE_URL: https://example.supabase.co
           SUPABASE_SERVICE_ROLE_KEY: ""
       - run: python -m py_compile database.py main.py engine/rag.py services/reporting.py services/knowledge_sync.py services/retrieval.py
+      # 테스트는 SQLite로 돌기 때문에 운영(PostgreSQL) 드라이버 누락을 잡지 못한다.
+      # 운영과 같은 postgresql:// URL로 엔진을 만들어 드라이버가 실제로 로드되는지 확인한다(접속은 하지 않음).
+      - run: python -c "from sqlalchemy import create_engine; create_engine('postgresql://u:p@localhost:5432/db')"
