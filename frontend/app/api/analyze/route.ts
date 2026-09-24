@@ -3,10 +3,15 @@ import { generateText } from 'ai';
 // PDF/이미지 파싱 + GPT-5.6 Sol 분석까지 한 요청에서 처리하므로 기본 타임아웃보다 여유가 필요하다.
 export const maxDuration = 300;
 import { createClient } from '@supabase/supabase-js';
+import { claimGenerationJob, GENERATION_MODEL, JobGateError, jsonError, updateGenerationJob } from '@/utils/server-jobs';
 // @ts-expect-error pdf-parse v1 has no compatible ESM type declaration
 import pdf from 'pdf-parse/lib/pdf-parse.js';
 
+// 계약서 본문은 이 분량까지만 모델에 보낸다(요청당 비용 상한).
+const MAX_DOCUMENT_CHARS = 60000;
+
 export async function POST(req: Request) {
+  const requestId = req.headers.get('x-request-id') || crypto.randomUUID();
   try {
     const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
     const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
@@ -86,6 +91,23 @@ export async function POST(req: Request) {
       );
     }
 
+    if (textContent.length > MAX_DOCUMENT_CHARS) {
+      textContent = `${textContent.slice(0, MAX_DOCUMENT_CHARS)}\n\n[문서가 길어 앞부분 ${MAX_DOCUMENT_CHARS.toLocaleString()}자까지만 분석했습니다]`;
+    }
+
+    // 모델 호출 전에 작업을 선점해 시간당 생성 수·월 한도를 백엔드가 강제하게 한다.
+    const backendAuth = { Authorization: `Bearer ${token}` };
+    let jobId: string;
+    try {
+      jobId = await claimGenerationJob(backendAuth, {
+        query: (description || file.name || '문서 분석').slice(0, 2000),
+        kind: 'analysis',
+      });
+    } catch (gateError) {
+      const failure = gateError instanceof JobGateError ? gateError : new JobGateError(503, 'AI 사용량을 확인하지 못했습니다.');
+      return jsonError(failure.status, failure.message);
+    }
+
     // 4. 프롬프트 및 메세지 구성
     const systemPrompt = `당신은 대한민국 전문 변호사입니다. 제공된 계약서(또는 법률 문서)를 정밀 분석하여 다음 정보를 추출하고 분석하십시오.
 
@@ -129,18 +151,33 @@ export async function POST(req: Request) {
     }
 
     // 5. Vercel AI Gateway 경유 분석 요청 (인증은 VERCEL_OIDC_TOKEN 자동 처리)
-    const { text } = await generateText({
-      model: 'openai/gpt-5.6-sol',
-      messages,
-      temperature: 0,
-      maxOutputTokens: 4000,
-      providerOptions: {
-        gateway: {
-          user: user.id,
-          tags: ['feature:document-analysis'],
+    let text: string;
+    try {
+      const generated = await generateText({
+        model: GENERATION_MODEL,
+        messages,
+        temperature: 0,
+        maxOutputTokens: 4000,
+        providerOptions: {
+          gateway: {
+            user: user.id,
+            tags: ['feature:document-analysis'],
+          },
         },
-      },
-    });
+      });
+      text = generated.text;
+      // 분석 결과는 보고서 히스토리 대상이 아니므로 result는 저장하지 않고 사용량만 기록한다.
+      await updateGenerationJob(backendAuth, jobId, {
+        status: 'complete', stage: '문서 분석 완료', progress: 100,
+        token_usage: JSON.parse(JSON.stringify(generated.usage || {})),
+      });
+    } catch (generationError) {
+      await updateGenerationJob(backendAuth, jobId, {
+        status: 'error', stage: '문서 분석 실패',
+        error: generationError instanceof Error ? generationError.message.slice(0, 1000) : String(generationError),
+      });
+      throw generationError;
+    }
 
     // 7. JSON 응답 추출 및 반환
     let jsonString = text.trim();
@@ -167,10 +204,7 @@ export async function POST(req: Request) {
       );
     }
   } catch (err: any) {
-    console.error('Document Analyze API Error:', err);
-    return new Response(
-      JSON.stringify({ error: `서버 내부 분석 오류가 발생했습니다: ${err.message}` }),
-      { status: 500, headers: { 'Content-Type': 'application/json' } }
-    );
+    console.error(JSON.stringify({ event: 'analyze_route_error', requestId, error: err?.message || String(err) }));
+    return jsonError(500, `서버 내부 분석 오류가 발생했습니다. (요청 ID: ${requestId})`);
   }
 }

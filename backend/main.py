@@ -148,21 +148,9 @@ async def signup(
     nickname: str = Form(...), 
     db: Session = Depends(get_db)
 ):
-    if len(password) < 8:
-        raise HTTPException(status_code=400, detail="비밀번호는 최소 8자 이상이어야 합니다.")
-
-    db_user = db.query(User).filter(User.username == username).first()
-    if db_user:
-        raise HTTPException(status_code=400, detail="Username already registered")
-
-    hashed_password = auth.get_password_hash(password)
-    new_user = User(username=username, nickname=nickname, hashed_password=hashed_password)
-    db.add(new_user)
-    db.commit()
-    db.refresh(new_user)
-    
-    access_token = auth.create_access_token(data={"sub": new_user.username})
-    return {"access_token": access_token, "token_type": "bearer", "username": new_user.username, "nickname": new_user.nickname}
+    # 아이디/비밀번호 가입은 이메일 소유를 확인하지 않는다. 남의 이메일로 먼저 가입해 두면
+    # 그 사람이 나중에 Google로 로그인할 때 같은 계정에 연결되므로 신규 가입을 막는다.
+    raise HTTPException(status_code=410, detail="신규 가입은 Google 로그인으로만 가능합니다.")
 
 @app.post("/auth/login")
 @limiter.limit("5/minute")
@@ -170,6 +158,8 @@ async def login(request: Request, username: str = Form(...), password: str = For
     user = db.query(User).filter(User.username == username).first()
     if not user or not auth.verify_password(password, user.hashed_password):
         raise HTTPException(status_code=400, detail="Incorrect username or password")
+    if user.supabase_id:
+        raise HTTPException(status_code=400, detail="이 계정은 Google 로그인으로 전환되었습니다. Google로 로그인해 주세요.")
     
     access_token = auth.create_access_token(data={"sub": user.username})
     return {"access_token": access_token, "token_type": "bearer", "username": user.username, "nickname": user.nickname}
@@ -210,13 +200,16 @@ async def sync_user(
         raise HTTPException(status_code=401, detail="Authentication required for sync")
         
     try:
-        payload = auth.decode_token_payload(token)
+        payload, token_kind = auth.decode_token(token)
+        # 레거시 토큰은 sub가 임의의 username이고 이메일도 없어서, 이를 허용하면 남의 이메일을
+        # 보내 그 계정의 supabase_id를 자기 username으로 바꿔치기(계정 탈취)할 수 있다.
+        # 계정 연결은 이메일 소유가 확인된 Supabase 토큰으로만 한다.
+        if token_kind != auth.TOKEN_KIND_SUPABASE or payload.get("is_anonymous"):
+            raise HTTPException(status_code=403, detail="Supabase login is required for sync")
         if payload.get("sub") != request.supabase_id:
             raise HTTPException(status_code=403, detail="Token sub does not match requested supabase_id")
-        # 이메일도 토큰과 일치해야 한다. 그렇지 않으면 공격자가 자신의 유효한 supabase_id로
-        # 타인의 이메일(username)을 보내 그 레거시 계정을 자신에게 연결(계정 탈취)할 수 있다.
-        token_email = payload.get("email")
-        if token_email and request.username and token_email.strip().lower() != request.username.strip().lower():
+        token_email = (payload.get("email") or "").strip().lower()
+        if not token_email or token_email != (request.username or "").strip().lower():
             raise HTTPException(status_code=403, detail="Token email does not match requested username")
     except HTTPException:
         raise
@@ -233,8 +226,10 @@ async def sync_user(
         # 2. 없으면 이메일(username)로 기존 레거시 유저가 있는지 검색
         user = db.query(User).filter(User.username == request.username).first()
         if user:
-            # 기존 유저가 있으면 supabase_id만 연결 (업데이트)
-            logger.debug(f"DEBUG: Linking existing legacy user {user.username} to supabase_id {request.supabase_id}")
+            # 기존 유저가 있으면 supabase_id만 연결 (업데이트). 위에서 이메일 소유가 확인된
+            # Supabase 토큰임을 검증했으므로, 다른 값이 들어 있던 경우(재가입, 과거 탈취 흔적)도
+            # 이메일 소유자에게 되돌린다.
+            log_event("auth_account_linked", user_id=user.id, relinked=bool(user.supabase_id))
             user.supabase_id = request.supabase_id
             if request.nickname:
                 user.nickname = request.nickname
@@ -953,6 +948,14 @@ def _estimate_cost_micros(usage: dict) -> int:
     return max(0, int(round(usd * 1_000_000)))
 
 
+def _usage_total(usage: dict) -> int:
+    total = _usage_value(usage, "totalTokens", "total_tokens")
+    if total:
+        return total
+    return (_usage_value(usage, "inputTokens", "input_tokens", "promptTokens", "prompt_tokens")
+            + _usage_value(usage, "outputTokens", "output_tokens", "completionTokens", "completion_tokens"))
+
+
 def _monthly_usage(db: Session, user_id: int):
     now = datetime.utcnow()
     month_start = datetime(now.year, now.month, 1)
@@ -1027,6 +1030,35 @@ async def create_generation_job(
     return _serialize_job(job)
 
 
+@app.post("/jobs/{job_id}/start")
+async def start_generation_job(
+    job_id: str,
+    current_user: User = Depends(auth.get_current_user),
+    db: Session = Depends(get_db),
+):
+    """AI 생성 직전에 서버(Next API 라우트)가 호출한다. 대기 중인 작업 하나를 원자적으로
+    실행 상태로 바꿔, 작업 하나당 모델 호출 한 번만 허용하고 월 한도를 다시 확인한다."""
+    usage = _monthly_usage(db, current_user.id)
+    if usage["total_tokens"] >= usage["token_limit"]:
+        raise HTTPException(status_code=429, detail="이번 달 AI 사용 한도에 도달했습니다.")
+    claimed = db.query(GenerationJob).filter(
+        GenerationJob.id == job_id,
+        GenerationJob.user_id == current_user.id,
+        GenerationJob.status == "queued",
+    ).update({
+        "status": "running",
+        "stage": "관련 법령·소스 검색",
+        "progress": 20,
+        "updated_at": datetime.utcnow(),
+    }, synchronize_session=False)
+    db.commit()
+    if not claimed:
+        raise HTTPException(status_code=409, detail="이미 처리되었거나 찾을 수 없는 작업입니다.")
+    job = db.query(GenerationJob).filter(GenerationJob.id == job_id).first()
+    log_event("generation_job_started", user_id=current_user.id, job_id=job_id)
+    return _serialize_job(job)
+
+
 @app.patch("/jobs/{job_id}")
 async def update_generation_job(
     job_id: str,
@@ -1048,6 +1080,10 @@ async def update_generation_job(
         allowed = ACTIVE_JOB_STATUSES | FINAL_JOB_STATUSES
         if payload.status not in allowed:
             raise HTTPException(status_code=400, detail="지원하지 않는 작업 상태입니다.")
+        # queued→running 전환은 /jobs/{id}/start만 한다. 끝난 작업을 다시 대기·실행 상태로
+        # 돌려 한 번 받은 생성 허가를 재사용하지 못하게 한다.
+        if payload.status in {"queued", "running"} and payload.status != job.status:
+            raise HTTPException(status_code=409, detail="작업 상태를 되돌릴 수 없습니다.")
         if protect_generated_result:
             job.status = "complete" if job.report_id else "generated"
         else:
@@ -1062,7 +1098,8 @@ async def update_generation_job(
         job.result = payload.result
     if payload.sources is not None:
         job.sources = payload.sources
-    if payload.token_usage is not None:
+    # 월 한도는 기록된 사용량으로 계산되므로 사용량은 줄어드는 방향으로 덮어쓰지 않는다.
+    if payload.token_usage is not None and _usage_total(payload.token_usage) >= _usage_total(job.token_usage or {}):
         job.token_usage = payload.token_usage
         job.estimated_cost_micros = _estimate_cost_micros(payload.token_usage)
     if payload.report_id is not None:
@@ -1402,15 +1439,6 @@ async def mark_all_notifications_read(
 ):
     count = legal_watch_engine.mark_all_notifications_as_read(db, current_user.id)
     return {"message": f"{count} notifications marked as read"}
-
-@app.post("/legal-watch/check")
-async def trigger_legal_watch_check(
-    current_user: User = Depends(auth.get_current_user),
-    db: Session = Depends(get_db)
-):
-    # This might be restricted to admin in production
-    results = await legal_watch_engine.check_updates(db)
-    return {"status": "success", "updates_found": len(results), "details": results}
 
 @app.get("/legal-watch/check-cron")
 async def legal_watch_cron(request: Request, db: Session = Depends(get_db)):

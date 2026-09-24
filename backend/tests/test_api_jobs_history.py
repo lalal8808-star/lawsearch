@@ -31,6 +31,10 @@ class JobsHistoryApiTest(unittest.TestCase):
         main.app.dependency_overrides[auth.get_current_user] = lambda: SimpleNamespace(id=cls.user_id)
         cls.client = TestClient(main.app)
 
+    @classmethod
+    def tearDownClass(cls):
+        main.app.dependency_overrides.pop(auth.get_current_user, None)
+
     def setUp(self):
         db = SessionLocal()
         db.query(Report).delete()
@@ -117,6 +121,48 @@ class JobsHistoryApiTest(unittest.TestCase):
         recoverable = self.client.get("/jobs", params={"recoverable": True, "limit": 3})
         self.assertEqual(recoverable.status_code, 200)
         self.assertIn(job_id, [item["id"] for item in recoverable.json()["items"]])
+
+    def _create_job(self):
+        response = self.client.post("/jobs", json={"query": "질의", "kind": "consultation"})
+        self.assertEqual(response.status_code, 200)
+        return response.json()["id"]
+
+    def test_job_can_be_started_only_once(self):
+        job_id = self._create_job()
+        started = self.client.post(f"/jobs/{job_id}/start")
+        self.assertEqual(started.status_code, 200)
+        self.assertEqual(started.json()["status"], "running")
+        self.assertEqual(self.client.post(f"/jobs/{job_id}/start").status_code, 409)
+        # 끝난 작업을 대기 상태로 되돌려 다시 시작하는 것도 막는다.
+        self.assertEqual(self.client.patch(f"/jobs/{job_id}", json={"status": "complete"}).status_code, 200)
+        self.assertEqual(self.client.patch(f"/jobs/{job_id}", json={"status": "queued"}).status_code, 409)
+        self.assertEqual(self.client.patch(f"/jobs/{job_id}", json={"status": "running"}).status_code, 409)
+        self.assertEqual(self.client.post(f"/jobs/{job_id}/start").status_code, 409)
+
+    def test_recorded_usage_cannot_be_lowered(self):
+        job_id = self._create_job()
+        self.client.post(f"/jobs/{job_id}/start")
+        self.client.patch(f"/jobs/{job_id}", json={"token_usage": {"inputTokens": 900, "outputTokens": 100, "totalTokens": 1000}})
+        lowered = self.client.patch(f"/jobs/{job_id}", json={"status": "complete", "token_usage": {"totalTokens": 0}})
+        self.assertEqual(lowered.status_code, 200)
+        self.assertEqual(lowered.json()["status"], "complete")
+        self.assertEqual(self.client.get("/usage").json()["total_tokens"], 1000)
+
+    def test_start_rechecks_the_monthly_limit(self):
+        pending = self._create_job()
+        spent = self._create_job()
+        self.client.post(f"/jobs/{spent}/start")
+        previous = os.environ.get("MONTHLY_AI_TOKEN_LIMIT")
+        os.environ["MONTHLY_AI_TOKEN_LIMIT"] = "500"
+        try:
+            self.client.patch(f"/jobs/{spent}", json={"status": "complete", "token_usage": {"totalTokens": 600}})
+            self.assertEqual(self.client.post(f"/jobs/{pending}/start").status_code, 429)
+            self.assertEqual(self.client.post("/jobs", json={"query": "질의"}).status_code, 429)
+        finally:
+            if previous is None:
+                os.environ.pop("MONTHLY_AI_TOKEN_LIMIT", None)
+            else:
+                os.environ["MONTHLY_AI_TOKEN_LIMIT"] = previous
 
 
 if __name__ == "__main__":

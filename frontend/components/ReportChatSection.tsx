@@ -104,7 +104,14 @@ export default function ReportChatSection({ reportId, initialHistory = [], query
             });
 
             if (!response.ok) {
-                throw new Error('채팅 응답에 실패했습니다.');
+                let detail = '';
+                try {
+                    detail = (await response.json())?.error || '';
+                } catch {
+                    detail = '';
+                }
+                // 사용 한도 초과처럼 사용자가 알아야 하는 사유는 그대로 보여준다.
+                throw new Error(response.status === 429 && detail ? detail : '채팅 응답에 실패했습니다.');
             }
 
             const reader = response.body?.getReader();
@@ -137,15 +144,20 @@ export default function ReportChatSection({ reportId, initialHistory = [], query
             await saveConversation(completed);
         } catch (error) {
             console.error('Chat error:', error);
+            // 작업 생성(/jobs, axios)과 생성 라우트(/api/chat) 어느 쪽의 한도 초과든 사유를 보여준다.
+            const reason = String((error as any)?.response?.data?.detail || (error instanceof Error ? error.message : ''));
+            const failure = /한도|너무 많습니다/.test(reason)
+                ? `죄송합니다. ${reason}`
+                : '죄송합니다. 오류가 발생했습니다. 다시 시도해 주세요.';
             if (jobId) api.patch(`/jobs/${jobId}`, { status: 'error', stage: '후속 질의 실패', error: error instanceof Error ? error.message : String(error) }).catch(() => { });
             setMessages(prev => {
                 const updated = [...prev];
                 const last = updated[updated.length - 1];
                 if (last && last.role === 'assistant' && !last.content) {
-                    last.content = '죄송합니다. 오류가 발생했습니다. 다시 시도해 주세요.';
+                    last.content = failure;
                     return updated;
                 }
-                return [...updated, { role: 'assistant', content: '죄송합니다. 오류가 발생했습니다. 다시 시도해 주세요.' }];
+                return [...updated, { role: 'assistant', content: failure }];
             });
         } finally {
             setIsLoading(false);

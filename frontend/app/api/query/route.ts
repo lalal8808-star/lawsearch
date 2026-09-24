@@ -1,6 +1,10 @@
 import { generateText } from 'ai';
+import { claimGenerationJob, GENERATION_MODEL, JobGateError, jsonError, updateGenerationJob } from '@/utils/server-jobs';
+
+export const maxDuration = 300;
 
 export async function POST(req: Request) {
+  const requestId = req.headers.get('x-request-id') || crypto.randomUUID();
   try {
     // 1. Check API Key
     const apiKey = req.headers.get('x-api-key') || req.headers.get('X-API-Key');
@@ -28,11 +32,25 @@ export async function POST(req: Request) {
       }
     }
 
+    query = String(query).trim();
     if (!query) {
       return new Response(
         JSON.stringify({ error: 'query 파라미터가 필요합니다.' }),
         { status: 400, headers: { 'Content-Type': 'application/json' } }
       );
+    }
+    if (query.length > 4000) {
+      return jsonError(400, 'query는 4,000자 이하여야 합니다.');
+    }
+
+    // 모델 호출 전에 API 키 소유자 명의로 작업을 선점한다(시간당 생성 수·월 한도 적용).
+    const backendAuth = { 'X-API-Key': apiKey };
+    let jobId: string;
+    try {
+      jobId = await claimGenerationJob(backendAuth, { query, kind: 'api' });
+    } catch (gateError) {
+      const failure = gateError instanceof JobGateError ? gateError : new JobGateError(503, 'AI 사용량을 확인하지 못했습니다.');
+      return jsonError(failure.status, failure.message);
     }
 
     // 3. Call backend for RAG context using API Key
@@ -84,12 +102,27 @@ export async function POST(req: Request) {
     }
 
     // 5. Generate Answer via AI SDK
-    const { text } = await generateText({
-      model: 'openai/gpt-5.6-sol',
-      system: systemInstruction,
-      messages: [{ role: 'user', content: query }],
-      maxOutputTokens: ragIntent === 'REPORT' ? 8000 : 2000,
-    });
+    let text: string;
+    try {
+      const generated = await generateText({
+        model: GENERATION_MODEL,
+        system: systemInstruction,
+        messages: [{ role: 'user', content: query }],
+        maxOutputTokens: ragIntent === 'REPORT' ? 8000 : 2000,
+        providerOptions: { gateway: { tags: ['feature:api-query'] } },
+      });
+      text = generated.text;
+      await updateGenerationJob(backendAuth, jobId, {
+        status: 'complete', stage: 'API 응답 완료', progress: 100, intent: ragIntent,
+        token_usage: JSON.parse(JSON.stringify(generated.usage || {})),
+      });
+    } catch (generationError) {
+      await updateGenerationJob(backendAuth, jobId, {
+        status: 'error', stage: 'API 응답 실패',
+        error: generationError instanceof Error ? generationError.message.slice(0, 1000) : String(generationError),
+      });
+      throw generationError;
+    }
 
     // 6. Return JSON response
     return new Response(
@@ -102,10 +135,7 @@ export async function POST(req: Request) {
     );
 
   } catch (err: any) {
-    console.error('Bot API Route Error:', err);
-    return new Response(
-      JSON.stringify({ error: `서버 내부 오류가 발생했습니다: ${err.message}` }), 
-      { status: 500, headers: { 'Content-Type': 'application/json' } }
-    );
+    console.error(JSON.stringify({ event: 'api_query_error', requestId, error: err?.message || String(err) }));
+    return jsonError(500, `서버 내부 오류가 발생했습니다. (요청 ID: ${requestId})`);
   }
 }

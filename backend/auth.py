@@ -4,14 +4,11 @@ from datetime import datetime, timedelta
 from typing import Optional
 import jwt
 from jwt import PyJWKClient
-import jwt
-from jwt import PyJWKClient
 import bcrypt
 import secrets
 import hashlib
 from fastapi import Depends, HTTPException, status, Header
 from fastapi.security import OAuth2PasswordBearer, APIKeyHeader
-from sqlalchemy.orm import Session
 from sqlalchemy.orm import Session
 from database import User, APIKey, get_db
 
@@ -39,8 +36,6 @@ credentials_exception = HTTPException(
     detail="Could not validate credentials",
     headers={"WWW-Authenticate": "Bearer"},
 )
-
-ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24 * 7 # 1 week
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="auth/login", auto_error=False)
 api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
@@ -91,9 +86,6 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
     encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm="HS256")
     return encoded_jwt
 
-    encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm="HS256")
-    return encoded_jwt
-
 async def get_user_by_api_key(api_key: str, db: Session):
     try:
         # 1. Check if key starts with prefix
@@ -117,49 +109,68 @@ async def get_user_by_api_key(api_key: str, db: Session):
         print(f"Error validating API key: {e}")
         return None
 
-def decode_token_payload(token: str) -> dict:
-    """Decodes and verifies a JWT token. Returns the payload or raises HTTPException."""
-    credentials_exception = HTTPException(
-        status_code=status.HTTP_401_UNAUTHORIZED,
-        detail="Could not validate credentials",
-        headers={"WWW-Authenticate": "Bearer"},
-    )
-    
-    try:
-        header = jwt.get_unverified_header(token)
-        alg = header.get("alg")
-    except Exception:
-        raise credentials_exception
+TOKEN_KIND_SUPABASE = "supabase"
+TOKEN_KIND_LEGACY = "legacy"
 
-    payload = None
-    # 1. Try Supabase JWT
-    if SUPABASE_JWT_SECRET or alg == "ES256":
+
+def _decode_supabase_token(token: str, alg: Optional[str]) -> Optional[dict]:
+    if not (SUPABASE_JWT_SECRET or alg == "ES256"):
+        return None
+    for audience in ("authenticated", None):
         try:
             if alg == "ES256":
                 signing_key = jwks_client.get_signing_key_from_jwt(token)
-                payload = jwt.decode(token, signing_key.key, algorithms=["ES256"], audience="authenticated")
+                key, algorithms = signing_key.key, ["ES256"]
             else:
-                payload = jwt.decode(token, SUPABASE_JWT_SECRET, algorithms=HMAC_ALGORITHMS, audience="authenticated")
+                key, algorithms = SUPABASE_JWT_SECRET, HMAC_ALGORITHMS
+            if audience:
+                return jwt.decode(token, key, algorithms=algorithms, audience=audience)
+            # aud 클레임이 없는 토큰만 통과한다(다른 aud를 가진 토큰은 여기서도 거부됨).
+            return jwt.decode(token, key, algorithms=algorithms)
         except jwt.InvalidAudienceError:
-            try:
-                if alg == "ES256":
-                    signing_key = jwks_client.get_signing_key_from_jwt(token)
-                    payload = jwt.decode(token, signing_key.key, algorithms=["ES256"])
-                else:
-                    payload = jwt.decode(token, SUPABASE_JWT_SECRET, algorithms=HMAC_ALGORITHMS)
-            except Exception:
-                pass
+            continue
         except Exception:
-            pass
+            return None
+    return None
 
-    # 2. Try Legacy Secret
-    if payload is None:
-        try:
-            payload = jwt.decode(token, SECRET_KEY, algorithms=HMAC_ALGORITHMS)
-        except Exception:
-            raise credentials_exception
-            
-    return payload
+
+def decode_token(token: str) -> tuple[dict, str]:
+    """JWT를 검증하고 (payload, 발급 주체)를 돌려준다.
+
+    Supabase가 발급한 토큰과 이 서버가 발급한 레거시 토큰은 sub의 의미가 다르다
+    (Supabase: 사용자 UUID, 레거시: username). 어느 키로 검증됐는지를 함께 반환해
+    호출부가 sub를 올바른 컬럼으로만 조회하게 한다. 둘을 섞어 조회하면 레거시 가입으로
+    만든 토큰이 다른 사람의 supabase_id와 일치해 그 계정으로 로그인되는 문제가 생긴다."""
+    try:
+        alg = jwt.get_unverified_header(token).get("alg")
+    except Exception:
+        raise credentials_exception
+
+    payload = _decode_supabase_token(token, alg)
+    if payload is not None:
+        return payload, TOKEN_KIND_SUPABASE
+
+    try:
+        return jwt.decode(token, SECRET_KEY, algorithms=HMAC_ALGORITHMS), TOKEN_KIND_LEGACY
+    except Exception:
+        raise credentials_exception
+
+
+def decode_token_payload(token: str) -> dict:
+    """Decodes and verifies a JWT token. Returns the payload or raises HTTPException."""
+    return decode_token(token)[0]
+
+
+def find_user_for_token(payload: dict, kind: str, db: Session) -> Optional[User]:
+    sub = payload.get("sub")
+    if not sub:
+        return None
+    if kind == TOKEN_KIND_SUPABASE:
+        return db.query(User).filter(User.supabase_id == sub).first()
+    # 레거시 토큰은 Google(Supabase)로 연결되지 않은 레거시 계정에만 유효하다.
+    # 연결된 계정은 이메일 소유가 확인된 Supabase 로그인으로만 접근한다.
+    return db.query(User).filter(User.username == sub, User.supabase_id.is_(None)).first()
+
 
 async def get_current_user(
     token: Optional[str] = Depends(oauth2_scheme), 
@@ -180,16 +191,8 @@ async def get_current_user(
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    payload = decode_token_payload(token)
-    
-    sub: str = payload.get("sub")
-    if sub is None:
-        raise credentials_exception
-        
-    user = db.query(User).filter(User.supabase_id == sub).first()
-    if user is None:
-        user = db.query(User).filter(User.username == sub).first()
-        
+    payload, kind = decode_token(token)
+    user = find_user_for_token(payload, kind, db)
     if user is None:
         logger.debug("get_current_user: no matching user for token subject")
         raise credentials_exception
@@ -210,42 +213,8 @@ async def get_current_user_optional(request: Request, db: Session = Depends(get_
     auth_header = request.headers.get("Authorization")
     if not auth_header or not auth_header.startswith("Bearer "):
         return None
-    token = auth_header.split(" ")[1]
-    
     try:
-        header = jwt.get_unverified_header(token)
-        alg = header.get("alg")
-        
-        payload = None
-        # 1. Try Supabase
-        if SUPABASE_JWT_SECRET or alg == "ES256":
-            try:
-                if alg == "ES256":
-                    signing_key = jwks_client.get_signing_key_from_jwt(token)
-                    payload = jwt.decode(token, signing_key.key, algorithms=["ES256"], audience="authenticated")
-                else:
-                    payload = jwt.decode(token, SUPABASE_JWT_SECRET, algorithms=HMAC_ALGORITHMS, audience="authenticated")
-            except Exception:
-                try:
-                    if alg == "ES256":
-                        signing_key = jwks_client.get_signing_key_from_jwt(token)
-                        payload = jwt.decode(token, signing_key.key, algorithms=["ES256"])
-                    else:
-                        payload = jwt.decode(token, SUPABASE_JWT_SECRET, algorithms=HMAC_ALGORITHMS)
-                except Exception:
-                    payload = None
-                    
-        # 2. Try Legacy
-        if payload is None:
-            try:
-                payload = jwt.decode(token, SECRET_KEY, algorithms=HMAC_ALGORITHMS)
-            except Exception:
-                return None
-                
-        sub: str = payload.get("sub")
-        if sub is None:
-            return None
-            
-        return db.query(User).filter((User.supabase_id == sub) | (User.username == sub)).first()
+        payload, kind = decode_token(auth_header.split(" ")[1])
+        return find_user_for_token(payload, kind, db)
     except Exception:
         return None

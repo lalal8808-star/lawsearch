@@ -46,7 +46,7 @@ export default function AuthModal({ isOpen, onClose, initialMode = "login" }: Au
         setLoading(true);
         setError("");
 
-        if (mode === "signup" && password !== confirmPassword) {
+        if (mode === "profile" && password && password !== confirmPassword) {
             setError("비밀번호가 일치하지 않습니다.");
             setLoading(false);
             return;
@@ -70,12 +70,10 @@ export default function AuthModal({ isOpen, onClose, initialMode = "login" }: Au
             const formData = new FormData();
             formData.append("username", username);
             formData.append("password", password);
-            if (mode === "signup") {
-                formData.append("nickname", nickname);
-            }
 
-            const endpoint = mode === "login" ? "/auth/login" : "/auth/signup";
-            const res = await api.post(endpoint, formData);
+            // 아이디/비밀번호 신규 가입은 닫혔다(이메일 소유 확인이 없어 계정 탈취에 악용 가능).
+            // 이 폼은 기존 아이디 계정의 로그인에만 쓰인다.
+            const res = await api.post("/auth/login", formData);
 
             login(res.data.access_token, res.data.username, res.data.nickname);
             onClose();
@@ -121,6 +119,13 @@ export default function AuthModal({ isOpen, onClose, initialMode = "login" }: Au
                                 </button>
                             </div>
 
+                            {mode === "signup" && (
+                                <p className="text-sm text-muted leading-relaxed bg-secondary/[0.035] border border-secondary/10 rounded-[9px] p-4">
+                                    신규 가입은 Google 계정으로만 할 수 있습니다. 아래 Google 버튼으로 계속해 주세요.
+                                </p>
+                            )}
+
+                            {mode !== "signup" && (
                             <form onSubmit={handleSubmit} className="space-y-4">
                                 <div className="space-y-2">
                                     <label className="text-[10px] font-bold text-muted uppercase tracking-widest pl-1">Username</label>
@@ -138,7 +143,7 @@ export default function AuthModal({ isOpen, onClose, initialMode = "login" }: Au
                                     </div>
                                 </div>
 
-                                {(mode === "signup" || mode === "profile") && (
+                                {mode === "profile" && (
                                     <div className="space-y-2">
                                         <label className="text-[10px] font-bold text-muted uppercase tracking-widest pl-1">Nickname</label>
                                         <div className="relative">
@@ -188,16 +193,16 @@ export default function AuthModal({ isOpen, onClose, initialMode = "login" }: Au
                                     </div>
                                 </div>
 
-                                {(mode === "signup" || mode === "profile") && (
+                                {mode === "profile" && (
                                     <div className="space-y-2">
                                         <label className="text-[10px] font-bold text-muted uppercase tracking-widest pl-1">
-                                            {mode === "profile" ? "Confirm New Password" : "Confirm Password"}
+                                            Confirm New Password
                                         </label>
                                         <div className="relative">
                                             <Lock className="absolute left-3 top-1/2 -translate-y-1/2 text-muted" size={16} />
                                             <input
                                                 type="password"
-                                                required={mode === "signup" || (mode === "profile" && password !== "")}
+                                                required={password !== ""}
                                                 value={confirmPassword}
                                                 onChange={(e) => setConfirmPassword(e.target.value)}
                                                 className="w-full bg-secondary/[0.035] border border-secondary/10 rounded-[9px] py-3 pl-10 pr-4 text-sm focus:outline-none focus:ring-2 focus:ring-accent/25 focus:border-accent/50 transition-all"
@@ -218,9 +223,10 @@ export default function AuthModal({ isOpen, onClose, initialMode = "login" }: Au
                                     disabled={loading}
                                     className="w-full editorial-button font-bold py-3.5 transition-all flex items-center justify-center gap-2 text-sm tracking-wide"
                                 >
-                                    {loading ? <Loader2 className="animate-spin" size={18} /> : mode === "login" ? "Sign In" : mode === "signup" ? "Register Now" : "Update Profile"}
+                                    {loading ? <Loader2 className="animate-spin" size={18} /> : mode === "login" ? "Sign In" : "Update Profile"}
                                 </button>
                             </form>
+                            )}
 
                             {mode !== "profile" && (
                                 <>

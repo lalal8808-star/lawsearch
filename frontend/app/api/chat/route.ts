@@ -1,5 +1,8 @@
 import { streamText } from 'ai';
+import { after } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
+import { limitChatMessages } from '@/utils/chat-limits';
+import { claimGenerationJob, GENERATION_MODEL, JobGateError, jsonError, updateGenerationJob } from '@/utils/server-jobs';
 
 // 이 라우트는 한 요청에서 인증 → 백엔드 query-context(법령 자동수집·임베딩·벡터검색, 20초+)
 // → GPT-5.6 Sol 보고서 생성까지 수행한다. 기본 타임아웃으로는 스트림 시작 전에 끊겨
@@ -8,20 +11,8 @@ export const maxDuration = 300;
 
 const backendUrl = () => (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000').replace(/\/$/, '');
 
-async function updateJob(token: string, jobId: string | undefined, payload: Record<string, unknown>) {
-  if (!jobId) return;
-  try {
-    const response = await fetch(`${backendUrl()}/jobs/${encodeURIComponent(jobId)}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-      body: JSON.stringify(payload),
-      cache: 'no-store',
-    });
-    if (!response.ok) console.error(JSON.stringify({ event: 'job_update_failed', jobId, status: response.status }));
-  } catch (error) {
-    console.error(JSON.stringify({ event: 'job_update_error', jobId, error: error instanceof Error ? error.message : String(error) }));
-  }
-}
+const updateJob = (token: string, jobId: string | undefined, payload: Record<string, unknown>) =>
+  updateGenerationJob({ Authorization: `Bearer ${token}` }, jobId, payload);
 
 export async function POST(req: Request) {
   const requestId = req.headers.get('x-request-id') || crypto.randomUUID();
@@ -63,17 +54,26 @@ export async function POST(req: Request) {
     // 2. 파라미터 파싱
     const body = await req.json();
     const followUp = body.mode === 'followup';
-    const messages = Array.isArray(body.messages) ? body.messages.slice(-30).map((message: any) => ({
-      role: message?.role === 'assistant' ? 'assistant' : 'user',
-      content: String(message?.content || '').slice(0, 30000),
-    })) : [];
-    activeJobId = typeof body.jobId === 'string' ? body.jobId : undefined;
+    // 후속 질의는 [원 질의, 원 보고서, ...상담] 순서라 앞의 두 개는 항상 남긴다.
+    const messages = limitChatMessages(body.messages, { pinnedLeading: followUp ? 2 : 0 });
     const lastUserMessage = messages[messages.length - 1]?.content || '';
     if (!lastUserMessage.trim()) {
-      return new Response(JSON.stringify({ error: '질문 내용이 없습니다.' }), { status: 400, headers: { 'Content-Type': 'application/json' } });
+      return jsonError(400, '질문 내용이 없습니다.');
+    }
+    // 모델 호출 전에 작업을 선점한다: 작업 하나당 호출 한 번, 시간당 생성 수·월 한도는 백엔드가 강제한다.
+    // (작업 생성은 백엔드 요청 제한을 받으므로 jobId 없이 이 라우트를 반복 호출해도 한도를 우회할 수 없다)
+    try {
+      activeJobId = await claimGenerationJob({ Authorization: `Bearer ${token}` }, {
+        jobId: typeof body.jobId === 'string' ? body.jobId : undefined,
+        query: lastUserMessage,
+        kind: followUp ? 'followup' : 'consultation',
+      });
+    } catch (gateError) {
+      const failure = gateError instanceof JobGateError ? gateError : new JobGateError(503, 'AI 사용량을 확인하지 못했습니다.');
+      console.warn(JSON.stringify({ event: 'chat_job_rejected', requestId, userId: user.id, status: failure.status }));
+      return jsonError(failure.status, failure.message);
     }
     console.info(JSON.stringify({ event: 'chat_started', requestId, jobId: activeJobId, userId: user.id, messageCount: messages.length }));
-    await updateJob(token, activeJobId, { status: 'running', stage: '관련 법령·소스 검색', progress: 20 });
 
     // 3. 백엔드 FastAPI를 호출하여 RAG 컨텍스트 및 소스 추출
     let ragContext = '';
@@ -125,7 +125,7 @@ export async function POST(req: Request) {
     // 비용 통제: 사용자 단위 태깅으로 대시보드에서 사용량 추적·per-user 레이트리밋을 걸 수 있고,
     // maxOutputTokens로 요청당 최대 출력을 제한해 폭주 비용을 막는다.
     const result = streamText({
-      model: 'openai/gpt-5.6-sol',
+      model: GENERATION_MODEL,
       system: systemInstruction,
       messages,
       maxOutputTokens: effectiveIntent === 'REPORT' ? 8000 : followUp ? 2500 : 2000,
@@ -154,6 +154,12 @@ export async function POST(req: Request) {
       }
     });
 
+    // 클라이언트가 중간에 연결을 끊어도 생성은 끝까지 진행되고 onFinish에서 사용량이 기록되도록
+    // 스트림을 별도로 소비한다. after()가 응답 종료 후에도 함수가 이 작업을 기다리게 한다.
+    after(async () => {
+      await result.consumeStream();
+    });
+
     return result.toTextStreamResponse({
       headers: {
         // HTTP 헤더는 Latin-1만 허용 → 한글 소스명이 들어가므로 URL 인코딩 (프론트에서 decode)
@@ -169,9 +175,6 @@ export async function POST(req: Request) {
     if (activeToken && activeJobId) {
       await updateJob(activeToken, activeJobId, { status: 'error', stage: '요청 처리 실패', error: err?.message || String(err) });
     }
-    return new Response(
-      JSON.stringify({ error: `서버 내부 오류가 발생했습니다: ${err.message}` }), 
-      { status: 500, headers: { 'Content-Type': 'application/json' } }
-    );
+    return jsonError(500, `서버 내부 오류가 발생했습니다. (요청 ID: ${requestId})`);
   }
 }
