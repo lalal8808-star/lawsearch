@@ -659,17 +659,53 @@ async def delete_upload(
         "affected_versions": len(rows),
     }
 
-async def _timed(timings: dict, name: str, awaitable):
+async def _timed(timings: dict, name: str, awaitable, on_done=None):
     started = time.perf_counter()
     try:
         return await awaitable
     finally:
         timings[name] = round((time.perf_counter() - started) * 1000)
+        if on_done:
+            on_done(name)
+
+
+def _write_job_progress(user_id: int, job_id: str, progress: int, stage: str):
+    db = database.SessionLocal()
+    try:
+        # 진행률은 앞으로만 움직인다. 순서가 뒤바뀐 늦은 갱신은 아무것도 바꾸지 않는다.
+        db.query(GenerationJob).filter(
+            GenerationJob.id == job_id,
+            GenerationJob.user_id == user_id,
+            GenerationJob.status == "running",
+            GenerationJob.progress < progress,
+        ).update({"progress": progress, "stage": stage, "updated_at": datetime.utcnow()}, synchronize_session=False)
+        db.commit()
+    except Exception as exc:
+        db.rollback()
+        logger.warning("job progress update failed job=%s error=%s", job_id, exc)
+    finally:
+        db.close()
+
+
+_progress_tasks: set = set()
+
+
+def _report_job_progress(user_id: int, job_id: Optional[str], progress: int, stage: str):
+    """생성 작업의 세부 단계를 기록한다. 화면은 이 값을 폴링해 실제 진행 상황을 보여준다.
+    DB 왕복이 검색 작업을 막지 않도록 별도 스레드·세션에서 기록한다."""
+    if not job_id:
+        return
+    task = asyncio.get_running_loop().create_task(
+        asyncio.to_thread(_write_job_progress, user_id, job_id, progress, stage)
+    )
+    _progress_tasks.add(task)
+    task.add_done_callback(_progress_tasks.discard)
 
 
 @app.get("/query-context")
 async def query_context(
     query: str,
+    job_id: Optional[str] = Query(default=None, max_length=64),
     current_user: User = Depends(auth.get_current_user),
     db: Session = Depends(get_db)
 ):
@@ -681,11 +717,24 @@ async def query_context(
     try:
         # 서로 독립적인 네 작업을 동시에 실행한다(이전에는 모두 순차 실행이라 수십 초가 걸렸다).
         # 법령·판례 수집은 DB에 없는 문서만 추가하므로 검색 전에 끝나야 새 문서가 결과에 포함된다.
+        pending = {"intent_ms", "embed_ms", "law_sync_ms", "precedent_sync_ms"}
+
+        def step_done(name: str):
+            pending.discard(name)
+            if not pending:
+                stage = "관련 자료 검색 중"
+            elif pending & {"law_sync_ms", "precedent_sync_ms"}:
+                stage = "관련 법령·판례 확인 중"
+            else:
+                stage = "질의 분석 중"
+            _report_job_progress(current_user.id, job_id, 20 + (4 - len(pending)) * 5, stage)
+
+        _report_job_progress(current_user.id, job_id, 22, "관련 법령·판례 확인 중")
         intent, query_embedding, laws_added, precedents_added = await asyncio.gather(
-            _timed(timings, "intent_ms", rag_engine.detect_intent(query)),
-            _timed(timings, "embed_ms", rag_engine.embeddings.aembed_query(query)),
-            _timed(timings, "law_sync_ms", knowledge_sync.sync_required_laws(query)),
-            _timed(timings, "precedent_sync_ms", knowledge_sync.sync_related_precedents(query)),
+            _timed(timings, "intent_ms", rag_engine.detect_intent(query), step_done),
+            _timed(timings, "embed_ms", rag_engine.embeddings.aembed_query(query), step_done),
+            _timed(timings, "law_sync_ms", knowledge_sync.sync_required_laws(query), step_done),
+            _timed(timings, "precedent_sync_ms", knowledge_sync.sync_related_precedents(query), step_done),
         )
 
         keywords = [k for k in re.split(r'\s+', query) if len(k) > 1]
@@ -705,6 +754,7 @@ async def query_context(
             match_count=40,
         )
         timings["search_ms"] = round((time.perf_counter() - search_started) * 1000)
+        _report_job_progress(current_user.id, job_id, 45, "근거 자료 정리 중")
 
         # 같은 본문이 여러 번 저장돼 있어도 상위 슬롯을 중복으로 차지하지 않게 먼저 합친다.
         docs = []

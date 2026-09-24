@@ -7,7 +7,7 @@ import api, { getAuthToken } from "@/utils/api";
 import axios from "axios";
 import { useAuth } from "@/context/AuthContext";
 import ImageUpload from "./ImageUpload";
-import { isStructuredReport, usagePercent } from "@/utils/generation";
+import { isStructuredReport, streamingProgress, usagePercent } from "@/utils/generation";
 
 type ChatMessage = {
     role: string;
@@ -36,6 +36,8 @@ export default function AIPanel() {
     const [mounted, setMounted] = useState(false);
     const { user } = useAuth();
     const textareaRef = useRef<HTMLTextAreaElement>(null);
+    // 답변 스트림을 받기 시작하면 받은 분량 자체가 진행 신호이므로 서버 폴링 값으로 덮어쓰지 않는다.
+    const streamingRef = useRef(false);
 
     useEffect(() => {
         setMounted(true);
@@ -56,7 +58,7 @@ export default function AIPanel() {
         const poll = async () => {
             try {
                 const res = await api.get(`/jobs/${currentJobId}`);
-                if (!active) return;
+                if (!active || streamingRef.current) return;
                 const nextProgress = Number(res.data?.progress) || 0;
                 const nextStage = res.data?.stage || "처리 중...";
                 setProgress((previous) => Math.max(previous, nextProgress));
@@ -295,6 +297,7 @@ export default function AIPanel() {
                 const jobRes = await api.post('/jobs', { query: currentQuery, kind: 'consultation', model: 'openai/gpt-5.6-sol' });
                 const jobId: string = jobRes.data.id;
                 activeJobId = jobId;
+                streamingRef.current = false;
                 setCurrentJobId(jobId);
                 setProgress(jobRes.data.progress || 5);
                 setLoadingStage(jobRes.data.stage || "요청 접수");
@@ -362,9 +365,13 @@ export default function AIPanel() {
                     assistantAnswer += decoder.decode(value, { stream: true });
                     if (!firstChunkReceived && assistantAnswer.trim()) {
                         firstChunkReceived = true;
-                        setProgress(70);
-                        setLoadingStage("AI 초안 수신 중");
+                        streamingRef.current = true;
                         api.patch(`/jobs/${jobId}`, { status: 'running', stage: 'AI 초안 수신 중', progress: 70 }).catch(() => { });
+                    }
+                    if (firstChunkReceived) {
+                        const received = assistantAnswer.length;
+                        setProgress((previous) => Math.max(previous, streamingProgress(received)));
+                        setLoadingStage(`AI 답변 작성 중 · ${received.toLocaleString()}자 수신`);
                     }
 
                     setMessages((prev) => {

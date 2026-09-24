@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isStructuredReport, usagePercent } from "./generation";
+import { isStructuredReport, streamingProgress, usagePercent } from "./generation";
 
 describe("isStructuredReport", () => {
     it("trusts an explicit REPORT intent", () => {
@@ -21,5 +21,18 @@ describe("usagePercent", () => {
         expect(usagePercent(500, 1000)).toBe(50);
         expect(usagePercent(1200, 1000)).toBe(100);
         expect(usagePercent(0, 1000)).toBe(0);
+    });
+});
+
+describe("streamingProgress", () => {
+    it("starts at the first-chunk stage and rises with received text", () => {
+        expect(streamingProgress(0)).toBe(70);
+        expect(streamingProgress(1500)).toBeGreaterThan(70);
+        expect(streamingProgress(6000)).toBeGreaterThan(streamingProgress(1500));
+    });
+
+    it("never reaches the completion stage before the stream ends", () => {
+        expect(streamingProgress(1_000_000)).toBe(88);
+        expect(streamingProgress(Number.NaN)).toBe(70);
     });
 });

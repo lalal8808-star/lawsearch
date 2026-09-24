@@ -81,7 +81,8 @@ export async function POST(req: Request) {
     let ragIntent = 'CHAT';
 
     try {
-      const ragRes = await fetch(`${backendUrl()}/query-context?query=${encodeURIComponent(lastUserMessage)}`, {
+      // job_id를 넘기면 백엔드가 검색 중 세부 단계를 작업에 기록하고, 화면은 그 값을 폴링해 보여준다.
+      const ragRes = await fetch(`${backendUrl()}/query-context?query=${encodeURIComponent(lastUserMessage)}&job_id=${encodeURIComponent(activeJobId || '')}`, {
         headers: {
           'Authorization': `Bearer ${token}`
         },

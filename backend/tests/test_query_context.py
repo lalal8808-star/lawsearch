@@ -18,7 +18,9 @@ from fastapi.testclient import TestClient
 
 import auth
 import main
-from database import RateLimit, SessionLocal, User
+import uuid
+
+from database import GenerationJob, RateLimit, SessionLocal, User
 
 STEP_SECONDS = 0.3
 
@@ -76,6 +78,36 @@ class QueryContextTest(unittest.TestCase):
         self.assertLess(elapsed, STEP_SECONDS * 2.5)
         self.assertEqual(body["context"].count("해고의 예고"), 1)
         self.assertEqual([s["source"] for s in body["sources"]], ["근로기준법", "해고예고수당 청구"])
+
+    def test_sub_stage_progress_is_recorded_on_the_running_job(self):
+        job_id = str(uuid.uuid4())
+        db = SessionLocal()
+        db.add(GenerationJob(id=job_id, user_id=self.user_id, query="q", kind="consultation",
+                             model="m", status="running", stage="관련 법령·소스 검색", progress=20))
+        db.commit()
+        db.close()
+        fake_sync = SimpleNamespace(
+            sync_required_laws=lambda q: slow(0),
+            sync_related_precedents=lambda q: slow(0),
+        )
+        with mock.patch.object(main, "knowledge_sync", fake_sync), \
+                mock.patch.object(main.rag_engine, "detect_intent", lambda q: slow("CHAT")), \
+                mock.patch.object(main.rag_engine, "embeddings", SimpleNamespace(aembed_query=lambda q: slow([0.1]))), \
+                mock.patch.object(main, "search_documents", lambda *a, **k: ([], "sql")):
+            response = self.client.get("/query-context", params={"query": "질의", "job_id": job_id})
+        self.assertEqual(response.status_code, 200)
+
+        deadline = time.time() + 3
+        job = None
+        while time.time() < deadline:
+            db = SessionLocal()
+            job = db.query(GenerationJob).filter(GenerationJob.id == job_id).one()
+            db.close()
+            if job.progress >= 45:
+                break
+            time.sleep(0.05)
+        self.assertEqual(job.progress, 45)
+        self.assertEqual(job.stage, "근거 자료 정리 중")
 
 
 if __name__ == "__main__":
