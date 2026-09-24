@@ -124,11 +124,6 @@ class RAGEngine:
             
         return str(content).replace('\\"', '"').replace("\\'", "'")
 
-    def _get_synced_sources(self) -> List[str]:
-        if self._metadata_cache is None:
-            self._refresh_metadata_cache()
-        return list(self._metadata_cache['sources'])
-
     def get_synced_msts(self) -> List[str]:
         if self._metadata_cache is None:
             self._refresh_metadata_cache()
@@ -166,7 +161,11 @@ class RAGEngine:
                         })
 
                     if records:
-                        self.supabase_client.table("documents").insert(records).execute()
+                        # supabase-py 호출은 동기식이라 이벤트 루프를 막는다. 스레드로 넘겨
+                        # 같은 요청의 다른 비동기 작업(의도 분류·임베딩 등)이 함께 진행되게 한다.
+                        await asyncio.to_thread(
+                            lambda rows=records: self.supabase_client.table("documents").insert(rows).execute()
+                        )
 
                 # Invalidate cache
                 self._metadata_cache = None
@@ -177,22 +176,15 @@ class RAGEngine:
                 raise
         return 0
 
-    def delete_documents_by_mst(self, mst: str):
-        """
-        Delete documents with a specific MST from the vector store.
-        """
-        try:
-            if not self.supabase_client: return
-            
-            # Direct deletion via Supabase client for metadata filtering
-            # documents.metadata @> '{"mst": "..."}'
-            self.supabase_client.table("documents").delete().filter("metadata->>mst", "eq", str(mst)).execute()
-            print(f"Deleted segments for MST {mst} from Supabase")
-            # Invalidate cache
-            self._metadata_cache = None
-        except Exception as e:
-            print(f"Error deleting documents: {e}")
-
+    def has_document(self, field: str, value: str, doc_type: Optional[str] = None) -> bool:
+        """metadata.<field> == value 인 문서가 있는지 DB에서 직접 확인한다(캐시 미사용)."""
+        if not self.supabase_client:
+            return False
+        request = self.supabase_client.table("documents").select("id") \
+            .filter(f"metadata->>{field}", "eq", str(value))
+        if doc_type:
+            request = request.filter("metadata->>type", "eq", doc_type)
+        return bool(request.limit(1).execute().data)
 
     async def recommend_laws(self, case_description: str) -> List[str]:
         """

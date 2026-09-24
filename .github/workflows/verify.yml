@@ -38,4 +38,4 @@ jobs:
           SECRET_KEY: integration-test-secret-key-that-is-long-enough
           SUPABASE_URL: https://example.supabase.co
           SUPABASE_SERVICE_ROLE_KEY: ""
-      - run: python -m py_compile database.py main.py engine/rag.py services/reporting.py
+      - run: python -m py_compile database.py main.py engine/rag.py services/reporting.py services/knowledge_sync.py services/retrieval.py

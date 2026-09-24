@@ -22,7 +22,9 @@ import database
 import auth
 from database import User, Report, get_db, Subscription, Notification, APIKey, UploadSource, GenerationJob
 from services.reporting import build_evidence_manifest, extract_answer_preview, sanitize_chat_history
-import logging
+from services.knowledge_sync import KnowledgeSync
+from services.retrieval import search_documents
+import asyncio
 
 from pydantic import BaseModel, Field
 
@@ -47,6 +49,7 @@ logger.info("JongLaw AI API Starting up... [Final RPC Fix Applied]")
 
 # Initialize DB on startup
 database.init_db()
+knowledge_sync = KnowledgeSync(rag_engine, law_client, document_processor)
 
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
@@ -656,6 +659,14 @@ async def delete_upload(
         "affected_versions": len(rows),
     }
 
+async def _timed(timings: dict, name: str, awaitable):
+    started = time.perf_counter()
+    try:
+        return await awaitable
+    finally:
+        timings[name] = round((time.perf_counter() - started) * 1000)
+
+
 @app.get("/query-context")
 async def query_context(
     query: str,
@@ -665,92 +676,53 @@ async def query_context(
     # 인증 필수: Gemini(의도·법령탐지·임베딩) + law.go.kr 조회 + Supabase 쓰기까지 수행하는
     # 비싼 엔드포인트다. 익명 접근을 막고 per-user 유량을 제한해 비용/DoS 남용을 차단한다.
     enforce_rate_limit(db, current_user.id, "query-context", 60)  # 시간당 60회
+    started = time.perf_counter()
+    timings: dict = {}
     try:
-        required_laws = await rag_engine.detect_required_laws(query)
-        if required_laws:
-            synced_sources = rag_engine._get_synced_sources()
-            for law_name in required_laws:
-                is_synced = any(law_name in s or s in law_name for s in synced_sources)
-                if not is_synced:
-                    try:
-                        search_results = await law_client.search_laws(law_name)
-                        law_list = search_results.get("law", [])
-                        if isinstance(law_list, dict): law_list = [law_list]
-                        best_match = None
-                        if law_list:
-                            for l in law_list:
-                                if l.get("법령명한글") == law_name:
-                                    best_match = l
-                                    break
-                            if not best_match: best_match = law_list[0]
-                        if best_match:
-                            mst = best_match.get("법령일련번호")
-                            law_data = await law_client.get_law_detail(mst)
-                            if law_data:
-                                docs = document_processor.process_law_xml(law_data, mst)
-                                if docs:
-                                    rag_engine.delete_documents_by_mst(mst)
-                                    await rag_engine.add_documents(docs)
-                    except Exception as sync_e:
-                        print(f"Warning: Auto-sync failed for law {law_name}: {sync_e}")
+        # 서로 독립적인 네 작업을 동시에 실행한다(이전에는 모두 순차 실행이라 수십 초가 걸렸다).
+        # 법령·판례 수집은 DB에 없는 문서만 추가하므로 검색 전에 끝나야 새 문서가 결과에 포함된다.
+        intent, query_embedding, laws_added, precedents_added = await asyncio.gather(
+            _timed(timings, "intent_ms", rag_engine.detect_intent(query)),
+            _timed(timings, "embed_ms", rag_engine.embeddings.aembed_query(query)),
+            _timed(timings, "law_sync_ms", knowledge_sync.sync_required_laws(query)),
+            _timed(timings, "precedent_sync_ms", knowledge_sync.sync_related_precedents(query)),
+        )
 
-        # 2. Autonomous Precedent Syncing
-        try:
-            prec_search = await law_client.search_precedents(query)
-            prec_list = prec_search.get("prec", [])
-            if isinstance(prec_list, dict): prec_list = [prec_list]
-            synced_msts = rag_engine.get_synced_msts()
-            for prec_item in prec_list[:3]:
-                prec_id = prec_item.get("판례일련번호")
-                if prec_id and str(prec_id) not in synced_msts:
-                    prec_detail = await law_client.get_precedent_detail(prec_id)
-                    if prec_detail:
-                        docs = document_processor.process_precedent_xml(prec_detail, prec_id)
-                        if docs:
-                            await rag_engine.add_documents(docs)
-        except Exception as prec_sync_e:
-            print(f"Warning: Precedent auto-sync failed: {prec_sync_e}")
-
-        # 3. Retrieve context and sources from RAGEngine
-        intent = await rag_engine.detect_intent(query)
         keywords = [k for k in re.split(r'\s+', query) if len(k) > 1]
-        docs = []
-        if rag_engine.supabase_client:
-            user_id_str = str(current_user.id) if current_user else None
-            upload_registry = db.query(UploadSource).filter(UploadSource.user_id == current_user.id).all()
-            active_upload_ids = {s.id for s in upload_registry if s.status == "active" and not s.id.startswith("legacy-")}
-            inactive_legacy_sources = {
-                s.source_name for s in upload_registry
-                if s.id.startswith("legacy-") and s.status != "active"
-            }
-            response = rag_engine.supabase_client.rpc(
-                "match_documents",
-                {
-                    "query_embedding": await rag_engine.embeddings.aembed_query(query),
-                    "match_threshold": 0.3,
-                    "match_count": 30
-                }
-            ).execute()
+        upload_registry = db.query(UploadSource).filter(UploadSource.user_id == current_user.id).all()
+        active_upload_ids = {s.id for s in upload_registry if s.status == "active" and not s.id.startswith("legacy-")}
+        inactive_legacy_sources = {
+            s.source_name for s in upload_registry
+            if s.id.startswith("legacy-") and s.status != "active"
+        }
+        search_started = time.perf_counter()
+        rows, search_method = search_documents(
+            db, rag_engine, query_embedding,
+            user_id=current_user.id,
+            active_upload_ids=active_upload_ids,
+            inactive_legacy_sources=inactive_legacy_sources,
+            match_threshold=0.3,
+            match_count=40,
+        )
+        timings["search_ms"] = round((time.perf_counter() - search_started) * 1000)
 
-            for row in response.data:
-                metadata = row.get('metadata', {})
-                # 업로드 자료는 본인 것만 (user_id는 JSON 숫자라 문자열로 맞춰 비교)
-                if metadata.get("type") == "user_upload":
-                    if str(metadata.get("user_id")) != str(user_id_str):
-                        continue
-                    upload_id = metadata.get("upload_id")
-                    if upload_id and str(upload_id) not in active_upload_ids:
-                        continue
-                    if not upload_id and metadata.get("source") in inactive_legacy_sources:
-                        continue
-                metadata['similarity'] = row.get('similarity')
-                docs.append(Document(page_content=row.get('content', ''), metadata=metadata))
+        # 같은 본문이 여러 번 저장돼 있어도 상위 슬롯을 중복으로 차지하지 않게 먼저 합친다.
+        docs = []
+        seen_contents = set()
+        for row in rows:
+            content = (row.get('content') or '').strip()
+            if not content or content in seen_contents:
+                continue
+            seen_contents.add(content)
+            metadata = dict(row.get('metadata') or {})
+            metadata['similarity'] = row.get('similarity')
+            docs.append(Document(page_content=content, metadata=metadata))
 
         # 업로드 자료 관련성 판단: 임베딩 유사도로는 같은 도메인(변전 vs 지중송전)을 못 가르므로
         # (관련 없어도 0.7로 붙음), 후보 업로드 파일 제목을 LLM에게 물어 무관한 자료는 제외한다.
         upload_sources = {d.metadata.get("source") for d in docs if d.metadata.get("type") == "user_upload"}
         if upload_sources:
-            relevant = await rag_engine.filter_relevant_uploads(query, list(upload_sources))
+            relevant = await _timed(timings, "upload_filter_ms", rag_engine.filter_relevant_uploads(query, list(upload_sources)))
             before = len(docs)
             docs = [d for d in docs
                     if d.metadata.get("type") != "user_upload" or d.metadata.get("source") in relevant]
@@ -764,30 +736,38 @@ async def query_context(
         docs = docs[:15]
 
         context_parts = []
-        seen_contents = set()
         sources_list = []
         
         for doc in docs:
-            content = doc.page_content.strip()
-            src = doc.metadata.get("source", "Unknown").strip()
+            content = doc.page_content
+            src = str(doc.metadata.get("source") or "Unknown").strip()
             src_type = doc.metadata.get("type", "unknown")
-            if content not in seen_contents:
-                context_parts.append(f"[{src}] {content}")
-                seen_contents.add(content)
-                source_key = (src, doc.metadata.get("article_no") or "")
-                if source_key not in [(s['source'], s.get('article_no') or "") for s in sources_list]:
-                    sources_list.append({
-                        "source": src,
-                        "type": src_type,
-                        "article_no": doc.metadata.get("article_no"),
-                        "mst": doc.metadata.get("mst"),
-                        "url": doc.metadata.get("url"),
-                        "upload_id": doc.metadata.get("upload_id"),
-                        "version": doc.metadata.get("version"),
-                        "retrieved_at": datetime.now(timezone.utc).isoformat(),
-                    })
+            context_parts.append(f"[{src}] {content}")
+            source_key = (src, doc.metadata.get("article_no") or "")
+            if source_key not in [(s['source'], s.get('article_no') or "") for s in sources_list]:
+                sources_list.append({
+                    "source": src,
+                    "type": src_type,
+                    "article_no": doc.metadata.get("article_no"),
+                    "mst": doc.metadata.get("mst"),
+                    "url": doc.metadata.get("url"),
+                    "upload_id": doc.metadata.get("upload_id"),
+                    "version": doc.metadata.get("version"),
+                    "retrieved_at": datetime.now(timezone.utc).isoformat(),
+                })
 
         context = "\n\n".join(context_parts[:10])
+        log_event(
+            "query_context_timing",
+            user_id=current_user.id,
+            total_ms=round((time.perf_counter() - started) * 1000),
+            search_method=search_method,
+            candidates=len(rows),
+            docs=len(docs),
+            laws_added=laws_added,
+            precedents_added=precedents_added,
+            **timings,
+        )
         
         return {
             "context": context,
