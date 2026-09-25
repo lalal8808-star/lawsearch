@@ -54,10 +54,14 @@ else:
     print(f"Database connection attempt: postgresql://****@{safe_log_url}")
 
 try:
+    _is_sqlite = SQLALCHEMY_DATABASE_URL.startswith("sqlite")
     engine = create_engine(
         SQLALCHEMY_DATABASE_URL,
         # Remove check_same_thread for PostgreSQL as it's SQLite specific
-        connect_args={"check_same_thread": False} if SQLALCHEMY_DATABASE_URL.startswith("sqlite") else {}
+        connect_args={"check_same_thread": False} if _is_sqlite else {"connect_timeout": 10},
+        # 서버리스 인스턴스가 쉬는 동안 풀러가 끊은 연결을 재사용하지 않도록 꺼내기 전에 확인한다
+        # ("SSL connection has been closed unexpectedly" 방지).
+        pool_pre_ping=not _is_sqlite,
     )
     SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 except Exception as e:
@@ -203,48 +207,55 @@ class GenerationJob(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
 
+# 콜드 스타트마다 실행되는 마이그레이션이 운영 트래픽을 막지 않게 하는 원칙:
+# 1) 카탈로그를 먼저 조회해 이미 적용된 DDL은 실행하지 않는다. ALTER TABLE은 "IF NOT EXISTS"여도
+#    테이블 전체 잠금(ACCESS EXCLUSIVE)을 먼저 잡으므로, 매번 실행하면 인스턴스가 동시에 뜰 때
+#    서로의 잠금을 기다리며 모든 조회가 줄줄이 멈춘다(2026-09 query-context 184초 지연의 원인).
+# 2) 꼭 실행해야 할 때도 문장마다 짧은 트랜잭션 + lock_timeout으로 잠금을 못 얻으면 바로 포기한다.
+MIGRATION_LOCK_TIMEOUT = "3s"
+
+
+def _run_ddl(statement: str) -> bool:
+    from sqlalchemy import text
+    try:
+        with engine.begin() as conn:
+            if engine.dialect.name == "postgresql":
+                conn.execute(text(f"SET LOCAL lock_timeout = '{MIGRATION_LOCK_TIMEOUT}'"))
+            conn.execute(text(statement))
+        return True
+    except Exception as e:
+        print(f"Migration skipped ({statement[:60]}...): {e}")
+        return False
+
+
+def _existing_indexes(table_name: str) -> set:
+    from sqlalchemy import inspect as sa_inspect
+    return {index["name"] for index in sa_inspect(engine).get_indexes(table_name)}
+
+
 def run_migrations():
     """기존 테이블에 새 컬럼을 idempotent하게 추가한다(create_all은 컬럼 추가를 안 함).
     실패해도 부팅을 막지 않도록 예외를 삼킨다."""
     try:
-        from sqlalchemy import inspect as sa_inspect, text
+        from sqlalchemy import inspect as sa_inspect
         insp = sa_inspect(engine)
         if "reports" in insp.get_table_names():
             cols = [c["name"] for c in insp.get_columns("reports")]
-            if "tags" not in cols:
-                coltype = "JSONB" if engine.dialect.name == "postgresql" else "TEXT"
-                with engine.begin() as conn:
-                    conn.execute(text(f"ALTER TABLE reports ADD COLUMN tags {coltype}"))
-                print(f"Migration: added reports.tags ({coltype})")
-            if "client_request_id" not in cols:
-                with engine.begin() as conn:
-                    conn.execute(text("ALTER TABLE reports ADD COLUMN client_request_id VARCHAR"))
-                print("Migration: added reports.client_request_id")
-            if "evidence_manifest" not in cols:
-                coltype = "JSONB" if engine.dialect.name == "postgresql" else "TEXT"
-                with engine.begin() as conn:
-                    conn.execute(text(f"ALTER TABLE reports ADD COLUMN evidence_manifest {coltype}"))
-                print(f"Migration: added reports.evidence_manifest ({coltype})")
-            if "generation_job_id" not in cols:
-                with engine.begin() as conn:
-                    conn.execute(text("ALTER TABLE reports ADD COLUMN generation_job_id VARCHAR"))
-                print("Migration: added reports.generation_job_id")
-            # PostgreSQL/SQLite 모두 지원하는 멱등한 고유 인덱스 생성.
-            with engine.begin() as conn:
-                conn.execute(text(
-                    "CREATE UNIQUE INDEX IF NOT EXISTS ix_reports_client_request_id "
-                    "ON reports (client_request_id)"
-                ))
-                conn.execute(text(
-                    "CREATE INDEX IF NOT EXISTS ix_reports_generation_job_id "
-                    "ON reports (generation_job_id)"
-                ))
-                conn.execute(text(
-                    "CREATE INDEX IF NOT EXISTS ix_reports_user_created_at "
-                    "ON reports (user_id, created_at DESC)"
-                ))
+            json_type = "JSONB" if engine.dialect.name == "postgresql" else "TEXT"
+            for column, coltype in (("tags", json_type), ("client_request_id", "VARCHAR"),
+                                    ("evidence_manifest", json_type), ("generation_job_id", "VARCHAR")):
+                if column not in cols and _run_ddl(f"ALTER TABLE reports ADD COLUMN {column} {coltype}"):
+                    print(f"Migration: added reports.{column} ({coltype})")
+            indexes = _existing_indexes("reports")
+            for name, ddl in (
+                ("ix_reports_client_request_id", "CREATE UNIQUE INDEX IF NOT EXISTS ix_reports_client_request_id ON reports (client_request_id)"),
+                ("ix_reports_generation_job_id", "CREATE INDEX IF NOT EXISTS ix_reports_generation_job_id ON reports (generation_job_id)"),
+                ("ix_reports_user_created_at", "CREATE INDEX IF NOT EXISTS ix_reports_user_created_at ON reports (user_id, created_at DESC)"),
+            ):
+                if name not in indexes:
+                    _run_ddl(ddl)
     except Exception as e:
-        print(f"Migration warning (reports.tags): {e}")
+        print(f"Migration warning (reports): {e}")
 
     # 이 서비스의 데이터 테이블은 브라우저가 Supabase Data API로 직접 접근하지 않고
     # 인증된 FastAPI만 사용한다. public 스키마가 PostgREST에 노출돼도 anon/authenticated가
@@ -255,18 +266,26 @@ def run_migrations():
             "rate_limits", "upload_sources", "generation_jobs", "documents",
         ]
         try:
-            from sqlalchemy import inspect as sa_inspect, text
-            existing = set(sa_inspect(engine).get_table_names())
-            with engine.begin() as conn:
-                for table_name in internal_tables:
-                    if table_name not in existing:
-                        continue
-                    conn.execute(text(f'ALTER TABLE "{table_name}" ENABLE ROW LEVEL SECURITY'))
-                    conn.execute(text(f'REVOKE ALL ON TABLE "{table_name}" FROM anon, authenticated'))
-            print("Migration: enabled RLS and revoked Data API roles for internal tables")
+            from sqlalchemy import text
+            with engine.connect() as conn:
+                without_rls = [row[0] for row in conn.execute(text(
+                    "SELECT c.relname FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace "
+                    "WHERE n.nspname = 'public' AND c.relkind = 'r' "
+                    "AND c.relname = ANY(:tables) AND NOT c.relrowsecurity"
+                ), {"tables": internal_tables})]
+                granted = [row[0] for row in conn.execute(text(
+                    "SELECT DISTINCT table_name FROM information_schema.role_table_grants "
+                    "WHERE table_schema = 'public' AND grantee IN ('anon', 'authenticated') "
+                    "AND table_name = ANY(:tables)"
+                ), {"tables": internal_tables})]
+            for table_name in without_rls:
+                _run_ddl(f'ALTER TABLE "{table_name}" ENABLE ROW LEVEL SECURITY')
+            for table_name in granted:
+                _run_ddl(f'REVOKE ALL ON TABLE "{table_name}" FROM anon, authenticated')
+            if without_rls or granted:
+                print(f"Migration: RLS enabled on {without_rls}, Data API grants revoked on {granted}")
         except Exception as e:
             print(f"Security migration warning (RLS/grants): {e}")
-
 
 def init_db():
     Base.metadata.create_all(bind=engine)
