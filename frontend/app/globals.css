@@ -191,18 +191,77 @@ body {
   }
 }
 
+/* 인쇄 용지. @page는 최상위에 둔다(WebKit은 @media print 안에 중첩된 @supports 속 @page를 무시한다). */
+@page {
+  size: A4;
+  margin: 0;
+}
+
+/* WebKit(Safari, iOS 브라우저)은 표 머리·꼬리를 쪽마다 반복하지 않는 대신 @page 여백을
+   지킨다. WebKit에서만 참인 조건으로 위·아래 여백을 @page로 옮기고 표 여백 칸은 없앤다
+   (그 밖의 브라우저는 '여백 없음' 설정에서도 동작하는 표 머리·꼬리 여백을 쓴다). */
+@supports (font: -apple-system-body) and (-webkit-appearance: none) {
+  @page {
+    margin: 15mm 0 16mm;
+  }
+
+  @media print {
+    .report-frame > thead,
+    .report-frame > tfoot {
+      display: none !important;
+    }
+  }
+}
+
+/* 화면에서는 인쇄용 여백 표를 일반 블록처럼 보이게 한다 */
+@media screen {
+  .report-frame,
+  .report-frame > tbody,
+  .report-frame > tbody > tr,
+  .report-frame > tbody > tr > td {
+    display: block;
+  }
+
+  .report-frame > thead,
+  .report-frame > tfoot {
+    display: none;
+  }
+}
+
 /* ── 법률 검토 보고서 인쇄(A4) 조판 ─────────────────────────────
    화면용 크기(본문 16~18px, 결론 20px)와 카드 여백·들여쓰기가 그대로 인쇄되면
    A4에서 글줄이 절반 폭으로 좁아지고 쪽수가 크게 늘어난다. 인쇄 시에는 종이 폭 전체를
    쓰고 본문 10pt 세리프로 정돈한다. */
 @media print {
-  /* 위·아래 여백은 쪽마다 필요하므로 @page로, 좌우 여백은 본문 안쪽 여백으로 준다.
-     @page 여백을 무시하는 브라우저(Safari 계열)나 '여백 없음' 인쇄 설정에서도
-     좌우 여백이 사라지지 않게 하기 위함이다. */
-  @page {
-    size: A4;
-    margin: 15mm 0 17mm;
+  /* 여백은 @page가 아니라 보고서 자체로 준다. @page 여백을 무시하는 브라우저(Safari 계열)나
+     '여백 없음' 인쇄 설정에서도 같은 결과가 나오도록, 좌우는 본문 안쪽 여백으로,
+     위·아래는 쪽마다 반복되는 표 머리·꼬리(.report-frame thead/tfoot) 높이로 준다. */
+  .report-frame {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 0 !important;
   }
+
+  .report-frame > thead {
+    display: table-header-group;
+  }
+
+  .report-frame > tfoot {
+    display: table-footer-group;
+  }
+
+  .report-frame td {
+    padding: 0;
+  }
+
+  .report-frame-head .report-frame-spacer {
+    height: 15mm;
+  }
+
+  .report-frame-foot .report-frame-spacer {
+    height: 16mm;
+  }
+
 
   html,
   body {
@@ -327,6 +386,11 @@ body {
   .report-conclusion .report-body {
     font-size: 10.5pt !important;
     color: #1f2633 !important;
+  }
+
+  /* 맺음 로고는 머리말과 중복되고 혼자 한 쪽으로 넘어가기 쉬워 인쇄에서는 뺀다 */
+  .report-colophon {
+    display: none !important;
   }
 
   /* 라벨·근거 목록 등 보조 정보 */

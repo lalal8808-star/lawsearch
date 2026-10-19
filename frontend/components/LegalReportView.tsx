@@ -414,6 +414,11 @@ export default function LegalReportView({ reportId, query, answer, sources, engi
                             <p>프린트 창에서 리포트 미리보기 이미지를 <b>두 손가락으로 펼치거나(Pinch out)</b> 길게 누르면 PDF로 변환되어 저장할 수 있습니다.</p>
                         </div>
 
+                        {/* 인쇄 시 thead/tfoot의 빈 칸이 쪽마다 반복되어 위·아래 여백이 된다.
+                            (@page 여백을 무시하는 Safari 등에서도 동작. 화면에서는 일반 블록으로 보인다) */}
+                        <table className="report-frame">
+                        <thead className="report-frame-head" aria-hidden="true"><tr><td><div className="report-frame-spacer" /></td></tr></thead>
+                        <tbody><tr><td>
                         <div id="report-to-print" className="report-document space-y-14 print-container">
                             {/* Title Branding */}
                             <div className="report-masthead flex flex-col md:flex-row md:justify-between md:items-end gap-8 border-b border-secondary pb-9">
@@ -829,7 +834,7 @@ export default function LegalReportView({ reportId, query, answer, sources, engi
                                 </section>
                             )}
 
-                            <div className="flex flex-col items-center gap-5 pt-16 border-t border-secondary/10 opacity-55 select-none pb-8">
+                            <div className="report-colophon flex flex-col items-center gap-5 pt-16 border-t border-secondary/10 opacity-55 select-none pb-8">
                                 <div className="flex items-center gap-3 text-muted">
                                     <Scale size={20} />
                                     <span className="editorial-serif text-[13px] font-semibold tracking-[0.08em]">JongLaw AI</span>
@@ -839,6 +844,9 @@ export default function LegalReportView({ reportId, query, answer, sources, engi
                                 </div>
                             </div>
                         </div>
+                        </td></tr></tbody>
+                        <tfoot className="report-frame-foot" aria-hidden="true"><tr><td><div className="report-frame-spacer" /></td></tr></tfoot>
+                        </table>
 
                         {/* Integrated Follow-up Chat */}
                         {/* Chatbot Section - Show if we have a valid reportId (number or JL- prefix) */}
