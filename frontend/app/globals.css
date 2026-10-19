@@ -196,9 +196,12 @@ body {
    A4에서 글줄이 절반 폭으로 좁아지고 쪽수가 크게 늘어난다. 인쇄 시에는 종이 폭 전체를
    쓰고 본문 10pt 세리프로 정돈한다. */
 @media print {
+  /* 위·아래 여백은 쪽마다 필요하므로 @page로, 좌우 여백은 본문 안쪽 여백으로 준다.
+     @page 여백을 무시하는 브라우저(Safari 계열)나 '여백 없음' 인쇄 설정에서도
+     좌우 여백이 사라지지 않게 하기 위함이다. */
   @page {
     size: A4;
-    margin: 16mm 16mm 18mm;
+    margin: 15mm 0 17mm;
   }
 
   html,
@@ -223,7 +226,7 @@ body {
   .report-sheet {
     max-width: none !important;
     margin: 0 !important;
-    padding: 0 !important;
+    padding: 0 17mm !important;
     border: 0 !important;
     box-shadow: none !important;
     background: #fff !important;
