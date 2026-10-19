@@ -51,6 +51,7 @@ export default function ReportPage() {
                         evidenceManifest: detail.evidence_manifest || [],
                         engine: detail.engine,
                         chat_history: detail.chat_history || [],
+                        createdAt: detail.created_at,
                         saveStatus: "saved",
                         clientRequestId: detail.client_request_id,
                         generationJobId: detail.generation_job_id,
@@ -174,6 +175,7 @@ export default function ReportPage() {
                     chat_history={reportData.chat_history || []}
                     evidenceManifest={reportData.evidenceManifest || []}
                     visionData={reportData.visionData}
+                    createdAt={reportData.createdAt}
                 />
 
                 <LegalWatchModal

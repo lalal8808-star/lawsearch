@@ -27,9 +27,10 @@ interface LegalReportViewProps {
     chat_history?: ChatMessage[];
     evidenceManifest?: any[];
     visionData?: any;
+    createdAt?: string;
 }
 
-export default function LegalReportView({ reportId, query, answer, sources, engine, chat_history = [], evidenceManifest = [], visionData }: LegalReportViewProps) {
+export default function LegalReportView({ reportId, query, answer, sources, engine, chat_history = [], evidenceManifest = [], visionData, createdAt }: LegalReportViewProps) {
     const [mounted, setMounted] = useState(false);
     const router = useRouter();
     const { user } = useAuth();
@@ -124,10 +125,12 @@ export default function LegalReportView({ reportId, query, answer, sources, engi
     const cleanContent = (text: string) => {
         if (!text) return "";
         return text
-            .replace(/\*\*(.*?)\*\*/g, "$1") // Remove bold markers
-            .replace(/#{1,6}\s?/g, "")       // Remove all markdown headers and # symbols
-            .replace(/[-\*]\s?/g, "• ")       // Replace bullet points with a cleaner bullet
-            .replace(/\\n/g, "\n")           // Handle literal newlines
+            .replace(/\*\*(.*?)\*\*/g, "$1")          // Remove bold markers
+            .replace(/^[ \t]*([-*_])\1{2,}[ \t]*$/gm, "") // Drop horizontal rules (---)
+            .replace(/^([ \t]*)#{1,6}\s?/gm, "$1")   // Remove markdown header markers at line start
+            .replace(/^([ \t]*)[-*]\s+/gm, "$1• ")    // Line-leading bullets only (keep hyphens inside text)
+            .replace(/\\n/g, "\n")                    // Handle literal newlines
+            .replace(/\n{3,}/g, "\n\n")
             .trim();
     };
 
@@ -201,11 +204,37 @@ export default function LegalReportView({ reportId, query, answer, sources, engi
     const sections = parseReport(answer);
 
 
+    // 본문을 문단·소제목·목록으로 나눠 조판한다. 소제목(가. / 1. / (1) 형태의 짧은 줄)은
+    // 굵게, 목록은 내어쓰기로 정렬해 긴 보고서에서도 위계가 보이게 한다.
     const renderContent = (content: string) => {
         if (!content) return null;
+        const blocks: { kind: "p" | "sub" | "li"; marker?: string; text: string }[] = [];
+        for (const raw of content.split("\n")) {
+            const line = raw.trim();
+            if (!line) { blocks.push({ kind: "p", text: "" }); continue; }
+            const bullet = line.match(/^•\s*(.*)$/);
+            if (bullet) { blocks.push({ kind: "li", marker: "•", text: bullet[1] }); continue; }
+            const numbered = line.match(/^((?:\d{1,2}|[가-하])[.)]|\(\d{1,2}\)|[①-⑳])\s*(.*)$/);
+            if (numbered) {
+                const isSub = numbered[2].length <= 30 && !/[.,。:;다요음함임]$/.test(numbered[2]);
+                blocks.push(isSub ? { kind: "sub", text: line } : { kind: "li", marker: numbered[1], text: numbered[2] });
+                continue;
+            }
+            blocks.push({ kind: "p", text: line });
+        }
         return (
-            <div className="leading-[1.8] break-keep whitespace-pre-wrap px-1 text-slate-700 font-serif">
-                {content}
+            <div className="report-body leading-[1.78] break-keep text-slate-700 font-serif">
+                {blocks.map((block, i) => {
+                    if (block.kind === "p" && !block.text) return <div key={i} className="report-gap h-3" aria-hidden />;
+                    if (block.kind === "sub") return <p key={i} className="report-subheading font-semibold text-secondary mt-4 mb-1">{block.text}</p>;
+                    if (block.kind === "li") return (
+                        <div key={i} className="report-li flex gap-2 pl-1">
+                            <span className="report-li-marker shrink-0 min-w-[1.1em] text-accent">{block.marker}</span>
+                            <span>{block.text}</span>
+                        </div>
+                    );
+                    return <p key={i}>{block.text}</p>;
+                })}
             </div>
         );
     };
@@ -305,14 +334,14 @@ export default function LegalReportView({ reportId, query, answer, sources, engi
     if (!mounted) return <div className="min-h-screen bg-background animate-pulse" />;
 
     return (
-        <div className="editorial-report bg-background min-h-screen text-secondary flex flex-col relative overflow-hidden editorial-paper-grid">
+        <div className="editorial-report report-print-root bg-background min-h-screen text-secondary flex flex-col relative overflow-hidden editorial-paper-grid">
 
             {/* Main Layout Grid */}
             <div className="flex-1 flex w-full max-w-[1600px] mx-auto relative group">
 
                 {/* Left Side: Report View */}
-                <div className="flex-1 p-3 sm:p-6 md:p-10 lg:p-14 overflow-y-auto max-h-screen print:max-h-none print:overflow-visible scrollbar-hide w-full">
-                    <div className="max-w-5xl mx-auto space-y-12 bg-card border border-border shadow-[0_28px_90px_rgba(42,37,29,0.1)] px-5 py-7 sm:px-8 md:px-12 lg:px-16 lg:py-14 print:border-0 print:shadow-none">
+                <div className="report-scroll flex-1 p-3 sm:p-6 md:p-10 lg:p-14 overflow-y-auto max-h-screen print:max-h-none print:overflow-visible scrollbar-hide w-full">
+                    <div className="report-sheet max-w-4xl mx-auto space-y-12 bg-card border border-border shadow-[0_28px_90px_rgba(42,37,29,0.1)] px-5 py-7 sm:px-8 md:px-12 lg:px-16 lg:py-14 print:border-0 print:shadow-none">
 
                         {error && (
                             <motion.div
@@ -385,9 +414,9 @@ export default function LegalReportView({ reportId, query, answer, sources, engi
                             <p>프린트 창에서 리포트 미리보기 이미지를 <b>두 손가락으로 펼치거나(Pinch out)</b> 길게 누르면 PDF로 변환되어 저장할 수 있습니다.</p>
                         </div>
 
-                        <div id="report-to-print" className="space-y-16 print-container">
+                        <div id="report-to-print" className="report-document space-y-14 print-container">
                             {/* Title Branding */}
-                            <div className="flex flex-col md:flex-row md:justify-between md:items-end gap-8 border-b border-secondary pb-9">
+                            <div className="report-masthead flex flex-col md:flex-row md:justify-between md:items-end gap-8 border-b border-secondary pb-9">
                                 <div className="space-y-4">
                                     <div className="flex items-center gap-3">
                                         <div className="relative w-11 h-11 bg-secondary rounded-[9px] flex items-center justify-center">
@@ -398,24 +427,25 @@ export default function LegalReportView({ reportId, query, answer, sources, engi
                                             <span className="text-[9px] font-bold text-accent uppercase tracking-[0.16em] mt-1">Professional Legal Review</span>
                                         </div>
                                     </div>
-                                    <h1 className="editorial-serif text-3xl md:text-[2.75rem] font-semibold text-secondary tracking-[-0.035em] leading-tight">
+                                    <h1 className="report-title editorial-serif text-[1.75rem] md:text-[2.25rem] font-semibold text-secondary tracking-[-0.035em] leading-tight break-keep">
                                         {visionData ? "계약서 검토 보고서" : "법률 검토 보고서"}
                                     </h1>
-                                    <div className="flex items-center gap-3 text-sm text-slate-400 font-mono italic">
-                                        <span>#{reportId}</span>
+                                    <div className="report-meta flex flex-wrap items-center gap-x-3 gap-y-1 text-xs md:text-sm text-slate-400 font-mono italic">
+                                        <span className="whitespace-nowrap">#{reportId}</span>
                                         <span className="w-1 h-1 bg-slate-200 rounded-full"></span>
-                                        <span>Issued: {new Date().toLocaleDateString()}</span>
+                                        {/* 발행일은 보고서가 저장된 날짜다(열람·인쇄한 날짜가 아님). */}
+                                        <span className="whitespace-nowrap">Issued: {(createdAt ? new Date(/[zZ]|[+-]\d{2}:?\d{2}$/.test(createdAt) ? createdAt : `${createdAt}Z`) : new Date()).toLocaleDateString("ko-KR")}</span>
                                         {engine && (
                                             <>
                                                 <span className="w-1 h-1 bg-slate-200 rounded-full"></span>
-                                                <span className="text-primary font-bold opacity-80 flex items-center gap-1">
+                                                <span className="whitespace-nowrap text-primary font-bold opacity-80 flex items-center gap-1">
                                                     <Zap size={12} /> {engine} Engine
                                                 </span>
                                             </>
                                         )}
                                     </div>
                                 </div>
-                                <div className="flex flex-col items-center md:items-end gap-2 shrink-0">
+                                <div className="flex flex-row md:flex-col items-center md:items-end gap-2 shrink-0">
                                     <div className="flex items-center gap-2 px-4 py-2 bg-secondary text-white rounded-md text-[10px] font-bold tracking-[0.12em]">
                                         <ShieldCheck size={14} className="text-[#d7b77b]" /> VERIFIED
                                     </div>
@@ -432,11 +462,11 @@ export default function LegalReportView({ reportId, query, answer, sources, engi
                                         <HelpCircle size={14} className="text-accent" />
                                         Client Inquiry
                                     </div>
-                                    <div className="relative p-6 md:p-9 bg-[#f7f2e8] border border-[#e2d7c6] rounded-[10px]">
-                                        <div className="absolute top-8 left-8 text-secondary/[0.045] select-none hidden md:block">
+                                    <div className="report-inquiry-box relative p-6 md:p-8 bg-[#f7f2e8] border border-[#e2d7c6] rounded-[10px]">
+                                        <div className="absolute top-8 left-8 text-secondary/[0.045] select-none hidden md:block print:hidden">
                                             <Scale size={64} />
                                         </div>
-                                        <div className="relative editorial-serif text-lg md:text-xl text-secondary leading-relaxed font-medium md:indent-6 whitespace-pre-wrap">
+                                        <div className="report-inquiry relative editorial-serif text-[15px] md:text-base text-secondary leading-[1.75] font-medium md:indent-6 whitespace-pre-wrap break-keep">
                                             "{query}"
                                         </div>
                                     </div>
@@ -585,15 +615,15 @@ export default function LegalReportView({ reportId, query, answer, sources, engi
                                         Legal Opinion
                                     </div>
 
-                                    <div className="space-y-20">
+                                    <div className="report-sections space-y-14">
                                         {/* 1. Overview */}
                                         {sections.overview && (
-                                            <div className="group space-y-6">
-                                                <div className="flex items-center gap-4 border-l-2 border-accent pl-5">
+                                            <div className="report-section group space-y-5">
+                                                <div className="report-section-head flex items-center gap-4 border-l-2 border-accent pl-5">
                                                     <span className="text-sm font-bold text-accent">01</span>
-                                                    <h3 className="editorial-serif text-2xl font-semibold text-secondary tracking-tight">사건 개요</h3>
+                                                    <h3 className="report-heading editorial-serif text-xl md:text-[1.375rem] font-semibold text-secondary tracking-tight">사건 개요</h3>
                                                 </div>
-                                                <div className="text-slate-700 pl-0 md:pl-14 text-base md:text-lg">
+                                                <div className="report-section-body text-slate-700 pl-0 md:pl-12 text-[15px] md:text-[15.5px]">
                                                     {renderContent(sections.overview)}
                                                 </div>
                                             </div>
@@ -601,12 +631,12 @@ export default function LegalReportView({ reportId, query, answer, sources, engi
 
                                         {/* 2. Analysis */}
                                         {sections.analysis && (
-                                            <div className="group space-y-6">
-                                                <div className="flex items-center gap-4 border-l-2 border-accent pl-5">
+                                            <div className="report-section group space-y-5">
+                                                <div className="report-section-head flex items-center gap-4 border-l-2 border-accent pl-5">
                                                     <span className="text-sm font-bold text-accent">02</span>
-                                                    <h3 className="editorial-serif text-2xl font-semibold text-secondary tracking-tight">법률 분석</h3>
+                                                    <h3 className="report-heading editorial-serif text-xl md:text-[1.375rem] font-semibold text-secondary tracking-tight">법률 분석</h3>
                                                 </div>
-                                                <div className="text-slate-700 pl-0 md:pl-14 text-base md:text-lg">
+                                                <div className="report-section-body text-slate-700 pl-0 md:pl-12 text-[15px] md:text-[15.5px]">
                                                     {renderContent(sections.analysis)}
                                                 </div>
                                             </div>
@@ -614,13 +644,13 @@ export default function LegalReportView({ reportId, query, answer, sources, engi
 
                                         {/* 3. Conclusion */}
                                         {sections.conclusion && (
-                                            <div className="group space-y-6">
-                                                <div className="flex items-center gap-4 border-l-2 border-primary pl-5">
+                                            <div className="report-section group space-y-5">
+                                                <div className="report-section-head flex items-center gap-4 border-l-2 border-primary pl-5">
                                                     <span className="text-sm font-bold text-primary">03</span>
-                                                    <h3 className="editorial-serif text-2xl font-semibold text-primary tracking-tight">핵심 결론</h3>
+                                                    <h3 className="report-heading editorial-serif text-xl md:text-[1.375rem] font-semibold text-primary tracking-tight">핵심 결론</h3>
                                                 </div>
-                                                <div className="ml-0 md:ml-14 relative">
-                                                    <div className="relative bg-[#f2ede3] border border-[#dfd5c5] p-7 md:p-10 rounded-[10px] text-secondary text-lg md:text-xl font-medium leading-relaxed">
+                                                <div className="report-section-body ml-0 md:ml-12 relative">
+                                                    <div className="report-conclusion relative bg-[#f2ede3] border border-[#dfd5c5] p-6 md:p-8 rounded-[10px] text-secondary text-[15px] md:text-base font-medium leading-relaxed">
                                                         {renderContent(sections.conclusion)}
                                                     </div>
                                                 </div>
@@ -629,12 +659,12 @@ export default function LegalReportView({ reportId, query, answer, sources, engi
 
                                         {/* 4. Steps */}
                                         {sections.action && (
-                                            <div className="group space-y-6">
-                                                <div className="flex items-center gap-4 border-l-2 border-emerald-700 pl-5">
+                                            <div className="report-section group space-y-5">
+                                                <div className="report-section-head flex items-center gap-4 border-l-2 border-emerald-700 pl-5">
                                                     <span className="text-sm font-bold text-emerald-700">04</span>
-                                                    <h3 className="editorial-serif text-2xl font-semibold text-emerald-800 tracking-tight">향후 조치</h3>
+                                                    <h3 className="report-heading editorial-serif text-xl md:text-[1.375rem] font-semibold text-emerald-800 tracking-tight">향후 조치</h3>
                                                 </div>
-                                                <div className="text-slate-700 pl-0 md:pl-14 text-base md:text-lg">
+                                                <div className="report-section-body text-slate-700 pl-0 md:pl-12 text-[15px] md:text-[15.5px]">
                                                     {renderContent(sections.action)}
                                                 </div>
                                             </div>
